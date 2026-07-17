@@ -1,0 +1,33 @@
+{
+  "name": "heydesk",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "check-types": "turbo run check-types",
+    "dev:web": "turbo run dev -F web",
+    "dev:server": "turbo run dev -F server",
+    "db:push": "turbo run db:push -F @heydesk/db",
+    "db:studio": "turbo run db:studio -F @heydesk/db",
+    "db:generate": "turbo run db:generate -F @heydesk/db",
+    "db:migrate": "turbo run db:migrate -F @heydesk/db",
+    "db:local": "turbo run db:local -F @heydesk/db"
+  },
+  "dependencies": {
+    "@heydesk/env": "workspace:*",
+    "dotenv": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@heydesk/config": "workspace:*",
+    "@types/node": "catalog:",
+    "turbo": "^2.10.2",
+    "typescript": "catalog:"
+  },
+  "packageManager": "pnpm@10.14.0"
+}

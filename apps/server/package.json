@@ -1,0 +1,27 @@
+{
+  "name": "server",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsdown",
+    "check-types": "tsc -b",
+    "compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.mjs"
+  },
+  "dependencies": {
+    "@heydesk/db": "workspace:*",
+    "@heydesk/env": "workspace:*",
+    "@hono/node-server": "^2.0.8",
+    "dotenv": "catalog:",
+    "hono": "^4.12.27",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@heydesk/config": "workspace:*",
+    "@types/node": "catalog:",
+    "tsdown": "^0.22.3",
+    "tsx": "^4.22.5",
+    "typescript": "catalog:"
+  }
+}

@@ -1,0 +1,3 @@
+{
+  "extends": "@heydesk/config/tsconfig.base.json"
+}
