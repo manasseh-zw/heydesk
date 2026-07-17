@@ -21,6 +21,7 @@ import {
   openWorkspace,
 } from "../workspace.service";
 import type { WorkspaceOverview, WorkspaceSummary } from "../workspace.types";
+import { WorkspaceShell } from "./workspace-shell";
 
 type DialogMode = "create" | "open" | null;
 
@@ -45,20 +46,10 @@ export function WorkspaceOnboarding() {
 
   if (selectedWorkspace) {
     return (
-      <main className="grid min-h-svh place-items-center px-6">
-        <div className="max-w-md text-center">
-          <LogoMark className="mx-auto size-12 text-primary" />
-          <h1 className="mt-6 font-heading text-2xl font-semibold tracking-tight">
-            {selectedWorkspace.name} is ready
-          </h1>
-          <p className="mt-2 break-all text-sm leading-6 text-muted-foreground">
-            {selectedWorkspace.path}
-          </p>
-          <Button className="mt-6" variant="outline" onClick={() => setSelectedWorkspace(null)}>
-            Back to workspaces
-          </Button>
-        </div>
-      </main>
+      <WorkspaceShell
+        onCloseWorkspace={() => setSelectedWorkspace(null)}
+        workspace={selectedWorkspace}
+      />
     );
   }
 
@@ -66,7 +57,7 @@ export function WorkspaceOnboarding() {
     <main className="min-h-svh overflow-y-auto bg-background px-7 py-14 sm:px-12 md:px-16 md:py-20">
       <section className="mx-auto flex w-full max-w-4xl flex-col justify-center md:min-h-[calc(100svh-10rem)]">
         <header className="flex items-center gap-3.5">
-          <LogoMark className="size-11 shrink-0 text-primary" />
+          <LogoMark className="size-11 shrink-0 text-logo-mark" />
           <div>
             <h1 className="font-brand text-2xl font-semibold tracking-tight">Heydesk</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">Your local AI workspace</p>

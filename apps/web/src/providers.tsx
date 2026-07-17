@@ -1,4 +1,5 @@
 import { Toaster } from "@heydesk/ui/components/sonner";
+import { TooltipProvider } from "@heydesk/ui/components/tooltip";
 import type { ReactNode } from "react";
 
 import { ThemeProvider } from "@/components/theme-provider";
@@ -16,8 +17,10 @@ export function Providers({ children }: ProvidersProps) {
       enableSystem
       storageKey="heydesk-theme"
     >
-      {children}
-      <Toaster richColors />
+      <TooltipProvider>
+        {children}
+        <Toaster richColors />
+      </TooltipProvider>
     </ThemeProvider>
   );
 }
