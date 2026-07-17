@@ -247,12 +247,29 @@ requests should explain the user journey, the durable result, validation run,
 and any remaining risks. The repository template in `.github/` is the minimum
 PR structure.
 
-GitHub attribution must be honest. A local Git author name can be set to
-`Codex` for commits made by Codex, but GitHub associates contribution credit
-with the commit email. Use an email verified on the intended GitHub account;
-do not invent an OpenAI or Codex email address. A separate GitHub bot account
-can be added later if the project needs one, but that requires an actual
-account, repository access, and authenticated credentials.
+Git identity must stay scoped to the actor making the commit. Keep the local
+and global Git identity set to the human maintainer. When Codex creates a
+commit, it must apply the identity only to that command with inline `-c`
+options:
+
+```bash
+git -c user.name="Codex" -c user.email="noreply@openai.com" commit -m "..."
+```
+
+The current ChatGPT-bundled Codex runtime uses `Codex <noreply@openai.com>`
+for its built-in attribution. Do not change the repository's persistent
+`user.name` or `user.email` to Codex, and do not run `git config user.name` or
+`git config user.email` as part of a Codex commit workflow. If a future Codex
+runtime exposes a different built-in attribution address, use that runtime's
+documented address instead of guessing one.
+
+This separates commit metadata, which GitHub reads from the commit author and
+email, from push authentication. A local Codex session still pushes through
+the user's configured GitHub credentials, so it cannot make a local push or
+pull request appear to have been authenticated by the Codex GitHub account.
+The GitHub-hosted Codex integration is a separate actor and requires its own
+repository access and connected account. Do not invent or use a personal
+email as Codex's attribution address.
 
 The hackathon requires the `/feedback` Codex Session ID from the primary
 thread where most core functionality was built. Run `/feedback` in that

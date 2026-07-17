@@ -1,13 +1,12 @@
-import { Toaster } from "@heydesk/ui/components/sonner";
 import { HeadContent, Outlet, createRootRouteWithContext } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 
 import Header from "@/components/header";
-import { ThemeProvider } from "@/components/theme-provider";
+import { Providers } from "@/providers";
 
 import "../index.css";
 
-export interface RouterAppContext {}
+export type RouterAppContext = Record<string, never>;
 
 export const Route = createRootRouteWithContext<RouterAppContext>()({
   component: RootComponent,
@@ -18,7 +17,7 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
       },
       {
         name: "description",
-        content: "heydesk is a web application",
+        content: "A local-first workspace for turning context into useful work.",
       },
     ],
     links: [
@@ -34,18 +33,12 @@ function RootComponent() {
   return (
     <>
       <HeadContent />
-      <ThemeProvider
-        attribute="class"
-        defaultTheme="dark"
-        disableTransitionOnChange
-        storageKey="vite-ui-theme"
-      >
-        <div className="grid grid-rows-[auto_1fr] h-svh">
+      <Providers>
+        <div className="grid h-svh grid-rows-[auto_1fr]">
           <Header />
           <Outlet />
         </div>
-        <Toaster richColors />
-      </ThemeProvider>
+      </Providers>
       <TanStackRouterDevtools position="bottom-left" />
     </>
   );
