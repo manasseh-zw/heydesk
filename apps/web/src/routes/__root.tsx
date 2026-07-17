@@ -1,7 +1,10 @@
-import { HeadContent, Outlet, createRootRouteWithContext } from "@tanstack/react-router";
+import {
+  HeadContent,
+  Outlet,
+  createRootRouteWithContext,
+} from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 
-import Header from "@/components/header";
 import { Providers } from "@/providers";
 
 import "../index.css";
@@ -17,7 +20,8 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
       },
       {
         name: "description",
-        content: "A local-first workspace for turning context into useful work.",
+        content:
+          "A local-first workspace for turning context into useful work.",
       },
     ],
     links: [
@@ -34,8 +38,7 @@ function RootComponent() {
     <>
       <HeadContent />
       <Providers>
-        <div className="grid h-svh grid-rows-[auto_1fr]">
-          <Header />
+        <div className="min-h-svh">
           <Outlet />
         </div>
       </Providers>
