@@ -16,12 +16,14 @@
     "@hookform/resolvers": "^5.4.0",
     "@tailwindcss/vite": "^4.3.2",
     "@tanstack/react-router": "^1.170.17",
+    "clsx": "^2.1.1",
     "dotenv": "catalog:",
     "lucide-react": "catalog:",
     "next-themes": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "sonner": "catalog:",
+    "tailwind-merge": "^3.6.0",
     "zod": "catalog:"
   },
   "devDependencies": {

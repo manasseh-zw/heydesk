@@ -85,7 +85,13 @@ heydesk/
 ├── packages/
 │   ├── ui/          # Shared shadcn/ui components and styles
 │   └── db/          # Database schema & queries
+├── docs/            # Product context, decisions, and submission material
+└── AGENTS.md        # Repository architecture and contribution guidance
 ```
+
+Read [AGENTS.md](AGENTS.md) before adding a feature. Heydesk uses domain-first
+vertical slices: a user-facing route should be traceable through its feature,
+client operation, Hono route, domain service, and durable boundary.
 
 ## Available Scripts
 
