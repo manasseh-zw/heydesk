@@ -91,6 +91,7 @@ describe("document-scoped assistant runs", () => {
       "apply_formatting",
       "set_paragraph_style",
       "scroll",
+      "append_paragraphs",
     ]);
     const turn = codex.requests.find(({ method }) => method === "turn/start");
     expect(turn?.params).toMatchObject({

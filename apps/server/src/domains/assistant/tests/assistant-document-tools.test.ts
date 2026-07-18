@@ -26,6 +26,46 @@ describe("document tool argument validation", () => {
     ).toMatchObject({ success: true });
   });
 
+  it("routes new content through the structural paragraph tool", () => {
+    expect(
+      validateDocumentToolArguments("suggest_change", {
+        paraId: "A1B2C3",
+        search: "",
+        replaceWith: "New paragraph",
+      }),
+    ).toEqual({
+      success: false,
+      error:
+        "Tracked changes must identify existing text. Use append_paragraphs for new content.",
+    });
+    expect(
+      validateDocumentToolArguments("append_paragraphs", {
+        paragraphs: [
+          {
+            styleId: "Heading1",
+            runs: [
+              { text: "Claim:", marks: { bold: true } },
+              { text: " Add the main point." },
+            ],
+          },
+        ],
+      }),
+    ).toMatchObject({ success: true });
+  });
+
+  it("bounds structural document operations", () => {
+    expect(
+      validateDocumentToolArguments("append_paragraphs", {
+        paragraphs: [{ runs: [{ text: "" }] }],
+      }),
+    ).toMatchObject({ success: false });
+    expect(
+      validateDocumentToolArguments("append_paragraphs", {
+        paragraphs: [{ runs: [{ text: "x".repeat(8_001) }] }],
+      }),
+    ).toMatchObject({ success: false });
+  });
+
   it("accepts safe formatting and paragraph-style operations", () => {
     expect(
       validateDocumentToolArguments("apply_formatting", {

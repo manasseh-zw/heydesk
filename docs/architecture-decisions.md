@@ -471,9 +471,20 @@ propose native tracked changes. A tool mutation is reported successful only
 after the resulting DOCX revision is committed by the server. Accepting or
 rejecting tracked changes remains a human action.
 
+Tracked replacement tools remain scoped to existing text. Creating a new or
+multi-paragraph document uses Heydesk's bounded `append_paragraphs` tool so
+paragraph boundaries, named styles, and run formatting are explicit in one
+validated call. The client serializes that mutated agent model directly,
+commits those exact bytes, and then reloads the durable buffer; a React render
+is never treated as the commit point. This path also preserves the `Map`-backed
+OOXML package metadata that the pinned 1.9.0 agent clone would otherwise turn
+into plain objects. Structured instrumentation records requested, claimed,
+completed, rejected, timed-out, and cancelled document tool calls without
+logging unbounded document content.
+
 **Deferred:** Collaborative editing, Yjs, document rename/delete, arbitrary
-agent formatting, Word coauthoring, and a desktop shell are not part of this
-vertical slice.
+layout and table mutation, Word coauthoring, and a desktop shell are not part
+of this vertical slice.
 
 ## Challenges and what they taught us
 

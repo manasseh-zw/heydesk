@@ -106,6 +106,7 @@ export function AssistantHome({
                   .filter((artifact) => artifact.afterMessageId === message.id)
                   .map((artifact) => (
                     <CommittedArtifactPreview
+                      kind={artifact.kind}
                       key={artifact.id}
                       onOpenPage={onOpenPage}
                       path={artifact.path}
@@ -166,6 +167,7 @@ export function AssistantHome({
               )
               .map((artifact) => (
                 <CommittedArtifactPreview
+                  kind={artifact.kind}
                   key={artifact.id}
                   onOpenPage={onOpenPage}
                   path={artifact.path}

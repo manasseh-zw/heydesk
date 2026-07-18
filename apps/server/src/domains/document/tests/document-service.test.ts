@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createDocumentWithText,
   createDocx,
+  parseDocx,
+  updateMultipleFiles,
 } from "@eigenpal/docx-editor-core/headless";
+import { createEmptyDocx } from "@eigenpal/docx-editor-core/docx/rezip";
 
 import {
   DocumentAlreadyExistsError,
@@ -33,9 +36,60 @@ describe("DocumentService", () => {
 
     expect(created).toMatchObject({ path: "Project brief.docx", name: "Project brief" });
     expect(content.buffer.byteLength).toBeGreaterThan(100);
+    const parsed = await parseDocx(arrayBuffer(content.buffer));
+    const styles = parsed.package.styles?.styles ?? [];
+    expect(styles.map(({ styleId }) => styleId)).toEqual(
+      expect.arrayContaining([
+        "Normal",
+        "Title",
+        "Subtitle",
+        "Heading1",
+        "Heading2",
+        "Heading3",
+        "Heading4",
+        "Heading5",
+        "Heading6",
+        "Quote",
+      ]),
+    );
+    expect(styles.find(({ styleId }) => styleId === "Heading1")).toMatchObject({
+      pPr: { outlineLevel: 0 },
+      rPr: { bold: true, fontSize: 40 },
+    });
     await expect(service.list("workspace-1")).resolves.toMatchObject([
       { path: "Project brief.docx" },
     ]);
+  });
+
+  it("repairs referenced heading styles in legacy Heydesk documents once", async () => {
+    const root = await createWorkspace();
+    const service = createService(root);
+    const legacy = await createEmptyDocx();
+    const withHeading = await updateMultipleFiles(
+      legacy,
+      new Map([
+        [
+          "word/document.xml",
+          `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Introduction</w:t></w:r></w:p>
+    <w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
+  </w:body>
+</w:document>`,
+        ],
+      ]),
+    );
+    await writeFile(join(root, "Legacy.docx"), bytes(withHeading));
+
+    const repaired = await service.read("workspace-1", "Legacy.docx");
+    const stable = await service.read("workspace-1", "Legacy.docx");
+    const parsed = await parseDocx(arrayBuffer(repaired.buffer));
+
+    expect(repaired.revision).toBe(stable.revision);
+    expect(parsed.package.styles?.styles.map(({ styleId }) => styleId)).toContain(
+      "Heading1",
+    );
   });
 
   it("imports and revision-checks exact DOCX bytes", async () => {
@@ -118,4 +172,11 @@ function createService(root: string): DocumentService {
 
 function bytes(buffer: ArrayBuffer): Uint8Array {
   return new Uint8Array(buffer);
+}
+
+function arrayBuffer(buffer: Uint8Array): ArrayBuffer {
+  return buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength,
+  ) as ArrayBuffer;
 }

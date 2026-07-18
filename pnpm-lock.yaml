@@ -108,6 +108,9 @@ importers:
       hono:
         specifier: ^4.12.27
         version: 4.12.30
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
       zod:
         specifier: 'catalog:'
         version: 4.4.3

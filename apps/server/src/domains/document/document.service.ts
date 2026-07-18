@@ -23,6 +23,7 @@ import type {
   DocumentFile,
   DocumentSummary,
 } from "./document.types";
+import { ensureStandardDocumentStyles } from "./document-styles";
 
 export const maximumDocumentSize = 25 * 1024 * 1024;
 
@@ -58,7 +59,11 @@ export class DocumentService {
     const name = normalizeNewName(requestedName);
     const target = resolve(root, name);
     await assertNewTarget(root, target);
-    const buffer = new Uint8Array(await createEmptyDocx());
+    const created = await ensureStandardDocumentStyles(
+      new Uint8Array(await createEmptyDocx()),
+    );
+    const buffer = created.buffer;
+    validateSize(buffer);
     await atomicCreate(target, buffer);
     return fileFor(root, target, buffer);
   }
@@ -81,7 +86,7 @@ export class DocumentService {
   async read(workspaceId: string, requestedPath: string): Promise<DocumentContent> {
     const root = await this.root(workspaceId);
     const path = await resolveExistingDocument(root, requestedPath);
-    const buffer = await readFile(path);
+    const buffer = await readDocumentWithStyleRepair(path);
     validateSize(buffer);
     return { ...(await fileFor(root, path, buffer)), buffer };
   }
@@ -252,6 +257,43 @@ async function atomicCreate(path: string, buffer: Uint8Array): Promise<void> {
       }
       throw error;
     }
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
+}
+
+async function readDocumentWithStyleRepair(path: string): Promise<Uint8Array> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const original = await readFile(path);
+    let repaired: Awaited<ReturnType<typeof ensureStandardDocumentStyles>>;
+    try {
+      repaired = await ensureStandardDocumentStyles(original, "referenced");
+    } catch (error) {
+      throw new InvalidDocumentError(
+        error instanceof Error
+          ? error.message
+          : "The document style catalog could not be read.",
+      );
+    }
+    if (!repaired.changed) return original;
+
+    const current = await readFile(path);
+    if (!current.equals(original)) continue;
+    await atomicReplace(path, repaired.buffer);
+    return repaired.buffer;
+  }
+  return readFile(path);
+}
+
+async function atomicReplace(path: string, buffer: Uint8Array): Promise<void> {
+  const details = await stat(path);
+  const temporaryPath = resolve(
+    dirname(path),
+    `.${basename(path)}.heydesk-${randomUUID()}.tmp`,
+  );
+  try {
+    await writeFile(temporaryPath, buffer, { flag: "wx", mode: details.mode });
+    await rename(temporaryPath, path);
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
   }

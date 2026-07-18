@@ -5,7 +5,10 @@ import {
   useState,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { setGoogleFontsEnabled } from "@eigenpal/docx-editor-core";
+import {
+  setGoogleFontsEnabled,
+  type TextFormatting,
+} from "@eigenpal/docx-editor-core";
 import {
   DocxEditor,
   type DocxEditorRef,
@@ -62,7 +65,22 @@ const mutatingDocumentTools = new Set([
   "suggest_change",
   "apply_formatting",
   "set_paragraph_style",
+  "append_paragraphs",
 ]);
+
+type AppendParagraphRun = {
+  text: string;
+  marks?: TextFormatting;
+};
+
+type AppendParagraph = {
+  runs: AppendParagraphRun[];
+  styleId?: string;
+};
+
+type DocumentToolResult =
+  | { success: true; data: unknown; buffer?: ArrayBuffer }
+  | { success: false; error: string };
 
 type SaveStatus = "saved" | "unsaved" | "saving" | "conflict" | "error";
 
@@ -104,6 +122,100 @@ export function DocumentView({
     author: "Heydesk",
     include: documentToolNames,
   });
+
+  const executeDocumentTool = useCallback(
+    async (
+      tool: string,
+      argumentsValue: Record<string, unknown>,
+    ): Promise<DocumentToolResult> => {
+      if (tool !== "append_paragraphs") {
+        const result = executeToolCall(tool, argumentsValue);
+        return result.success
+          ? { success: true, data: result.data }
+          : {
+              success: false,
+              error: result.error ?? "The document action failed.",
+            };
+      }
+      const paragraphs = parseAppendParagraphs(argumentsValue);
+      const editor = editorRef.current;
+      let agent = editor?.getAgent();
+      if (!editor || !agent) {
+        return { success: false, error: "The document editor is not ready." };
+      }
+      const outline = agent.getAgentContext(8_001).outline;
+      let paragraphIndex = agent.getParagraphCount() - 1;
+      if (paragraphIndex < 0) {
+        return {
+          success: false,
+          error: "This document has no paragraph that can receive content.",
+        };
+      }
+      const sourceDocument = agent.getDocument();
+      let paragraphText = outline.at(-1)?.preview ?? "";
+      let paragraphsAdded = 0;
+      for (const paragraph of paragraphs) {
+        if (paragraphsAdded > 0 || paragraphText.length > 0) {
+          agent = agent.insertParagraphBreak({
+            paragraphIndex,
+            offset: paragraphText.length,
+          });
+          paragraphIndex += 1;
+          paragraphText = "";
+        }
+        for (const run of paragraph.runs) {
+          if (run.text.length === 0) continue;
+          agent = agent.insertText(
+            { paragraphIndex, offset: paragraphText.length },
+            run.text,
+            {
+              formatting: {
+                bold: false,
+                boldCs: false,
+                italic: false,
+                italicCs: false,
+                underline: { style: "none" },
+                strike: false,
+                doubleStrike: false,
+                vertAlign: "baseline",
+                smallCaps: false,
+                allCaps: false,
+                hidden: false,
+                highlight: "none",
+                ...run.marks,
+              },
+            },
+          );
+          paragraphText += run.text;
+        }
+        if (paragraph.styleId) {
+          agent = agent.applyStyle(paragraphIndex, paragraph.styleId);
+        }
+        paragraphsAdded += 1;
+      }
+      const nextDocument = agent.getDocument();
+      // docx-editor 1.9.0 clones agent mutations through JSON, which turns
+      // package Maps and the original binary into plain objects. Restore the
+      // immutable package metadata before serialization so headers, footers,
+      // media, and the original OOXML package remain valid.
+      nextDocument.originalBuffer = sourceDocument.originalBuffer;
+      nextDocument.package.headers = sourceDocument.package.headers;
+      nextDocument.package.footers = sourceDocument.package.footers;
+      nextDocument.package.relationships = sourceDocument.package.relationships;
+      nextDocument.package.media = sourceDocument.package.media;
+      nextDocument.package.properties = sourceDocument.package.properties;
+      const buffer = await agent.toBuffer();
+      return {
+        success: true,
+        data: {
+          paragraphsAdded,
+          message: `Appended ${paragraphsAdded} real document paragraphs.`,
+        },
+        buffer,
+      };
+    },
+    [executeToolCall],
+  );
 
   useEffect(() => {
     if (!query.data || loadedRef.current) return;
@@ -246,11 +358,23 @@ export function DocumentView({
       toolChainRef.current = toolChainRef.current.then(async () => {
         try {
           await claimDocumentTool(workspace.id, call.callId);
-          const result = executeToolCall(call.tool, call.arguments);
+          const result = await executeDocumentTool(call.tool, call.arguments);
           let revision: string | undefined;
           if (result.success && mutatingDocumentTools.has(call.tool)) {
-            dirtyRef.current = true;
-            await performSave();
+            if (result.buffer) {
+              const current = loadedRef.current;
+              if (!current) throw new Error("The document editor is not ready.");
+              const saved = await saveDocument(
+                workspace.id,
+                path,
+                result.buffer,
+                current.revision,
+              );
+              await loadDurableDocument({ ...saved, buffer: result.buffer });
+            } else {
+              dirtyRef.current = true;
+              await performSave();
+            }
             revision = loadedRef.current?.revision;
           }
           await respondToDocumentTool(workspace.id, call.callId, {
@@ -267,7 +391,14 @@ export function DocumentView({
         }
       });
     }
-  }, [executeToolCall, performSave, session.state.documentToolCalls, workspace.id]);
+  }, [
+    executeDocumentTool,
+    loadDurableDocument,
+    path,
+    performSave,
+    session.state.documentToolCalls,
+    workspace.id,
+  ]);
 
   const sendDocumentMessage = async (message: string) => {
     await flush();
@@ -369,6 +500,45 @@ export function DocumentView({
       />
     </div>
   );
+}
+
+function parseAppendParagraphs(
+  argumentsValue: Record<string, unknown>,
+): AppendParagraph[] {
+  if (!Array.isArray(argumentsValue.paragraphs)) {
+    throw new Error("append_paragraphs needs a paragraphs array.");
+  }
+  return argumentsValue.paragraphs.map((paragraph, paragraphIndex) => {
+    if (!isRecord(paragraph) || !Array.isArray(paragraph.runs)) {
+      throw new Error(`Paragraph ${paragraphIndex + 1} needs a runs array.`);
+    }
+    const runs = paragraph.runs.map((run, runIndex) => {
+      if (!isRecord(run) || typeof run.text !== "string") {
+        throw new Error(
+          `Run ${runIndex + 1} in paragraph ${paragraphIndex + 1} needs text.`,
+        );
+      }
+      if (run.marks !== undefined && !isRecord(run.marks)) {
+        throw new Error(
+          `Run ${runIndex + 1} in paragraph ${paragraphIndex + 1} has invalid formatting.`,
+        );
+      }
+      return {
+        text: run.text,
+        ...(run.marks ? { marks: run.marks as TextFormatting } : {}),
+      };
+    });
+    return {
+      runs,
+      ...(typeof paragraph.styleId === "string"
+        ? { styleId: paragraph.styleId }
+        : {}),
+    };
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function SaveIndicator({ status }: { status: SaveStatus }) {

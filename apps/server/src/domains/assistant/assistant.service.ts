@@ -50,7 +50,7 @@ import type {
 const INTERACTION_TIMEOUT_MS = 5 * 60_000;
 const MODEL_CACHE_MS = 30_000;
 const DOCUMENT_TOOL_TIMEOUT_MS = 60_000;
-const DOCUMENT_TOOL_CONTRACT_VERSION = "document-tools-v2";
+const DOCUMENT_TOOL_CONTRACT_VERSION = "document-tools-v3";
 const DOCUMENT_TOOL_NAMES = new Set([
   "read_document",
   "read_selection",
@@ -64,12 +64,14 @@ const DOCUMENT_TOOL_NAMES = new Set([
   "apply_formatting",
   "set_paragraph_style",
   "scroll",
+  "append_paragraphs",
 ]);
 const MUTATING_DOCUMENT_TOOLS = new Set([
   "add_comment",
   "suggest_change",
   "apply_formatting",
   "set_paragraph_style",
+  "append_paragraphs",
 ]);
 
 const singleParagraphTextSchema = z
@@ -86,8 +88,9 @@ const suggestChangeArgumentsSchema = z
     replaceWith: singleParagraphTextSchema,
   })
   .strict()
-  .refine(({ search, replaceWith }) => search.length > 0 || replaceWith.length > 0, {
-    message: "A tracked change must search for or insert text.",
+  .refine(({ search }) => search.length > 0, {
+    message:
+      "Tracked changes must identify existing text. Use append_paragraphs for new content.",
   });
 const underlineStyleSchema = z.enum([
   "single",
@@ -162,15 +165,18 @@ const formattingMarksSchema = z
       })
       .optional(),
   })
-  .strict()
-  .refine((marks) => Object.keys(marks).length > 0, {
+  .strict();
+const nonEmptyFormattingMarksSchema = formattingMarksSchema.refine(
+  (marks) => Object.keys(marks).length > 0,
+  {
     message: "Choose at least one formatting change.",
-  });
+  },
+);
 const applyFormattingArgumentsSchema = z
   .object({
     paraId: documentParagraphIdSchema,
     search: singleParagraphTextSchema.optional(),
-    marks: formattingMarksSchema,
+    marks: nonEmptyFormattingMarksSchema,
   })
   .strict();
 const setParagraphStyleArgumentsSchema = z
@@ -179,6 +185,109 @@ const setParagraphStyleArgumentsSchema = z
     styleId: z.string().trim().min(1).max(128),
   })
   .strict();
+const appendParagraphRunSchema = z
+  .object({
+    text: z.string().max(4_000),
+    marks: formattingMarksSchema.optional(),
+  })
+  .strict();
+const appendParagraphSchema = z
+  .object({
+    runs: z.array(appendParagraphRunSchema).min(1).max(30),
+    styleId: z.string().trim().min(1).max(128).optional(),
+  })
+  .strict()
+  .refine(
+    ({ runs }) => runs.reduce((length, run) => length + run.text.length, 0) <= 8_000,
+    { message: "A document paragraph cannot exceed 8,000 characters." },
+  );
+const appendParagraphsArgumentsSchema = z
+  .object({
+    paragraphs: z.array(appendParagraphSchema).min(1).max(100),
+  })
+  .strict()
+  .refine(
+    ({ paragraphs }) =>
+      paragraphs.reduce(
+        (total, paragraph) =>
+          total + paragraph.runs.reduce((length, run) => length + run.text.length, 0),
+        0,
+      ) <= 50_000,
+    { message: "One document structure operation cannot exceed 50,000 characters." },
+  )
+  .refine(
+    ({ paragraphs }) =>
+      paragraphs.some((paragraph) => paragraph.runs.some((run) => run.text.length > 0)),
+    { message: "Add at least one paragraph with text." },
+  );
+
+const appendParagraphsDynamicTool = {
+  type: "function" as const,
+  name: "append_paragraphs",
+  description:
+    "Append real paragraphs to the end of the document in one atomic edit. Use this for new document structure or multi-paragraph content. Each paragraph contains ordered text runs, optional direct character formatting, and an optional Word paragraph style such as Title, Subtitle, Heading1 through Heading6, Quote, or Normal. This is a direct edit, not a tracked change.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["paragraphs"],
+    properties: {
+      paragraphs: {
+        type: "array",
+        minItems: 1,
+        maxItems: 100,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["runs"],
+          properties: {
+            styleId: { type: "string" },
+            runs: {
+              type: "array",
+              minItems: 1,
+              maxItems: 30,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["text"],
+                properties: {
+                  text: { type: "string" },
+                  marks: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      bold: { type: "boolean" },
+                      italic: { type: "boolean" },
+                      underline: { type: "boolean" },
+                      strike: { type: "boolean" },
+                      color: {
+                        type: "object",
+                        additionalProperties: false,
+                        properties: {
+                          rgb: { type: "string" },
+                          themeColor: { type: "string" },
+                        },
+                      },
+                      highlight: { type: "string" },
+                      fontSize: { type: "number" },
+                      fontFamily: {
+                        type: "object",
+                        additionalProperties: false,
+                        properties: {
+                          ascii: { type: "string" },
+                          hAnsi: { type: "string" },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
 
 type AssistantEventListener = (event: SequencedAssistantEvent) => void;
 
@@ -209,6 +318,7 @@ type PendingDocumentTool = {
   responder: CodexServerRequestResponder;
   active: ActiveRun;
   claimed: boolean;
+  requestedAt: number;
   timeout: NodeJS.Timeout;
 };
 
@@ -617,6 +727,9 @@ export class AssistantService {
       throw new AssistantConflictError("That document action is already being handled.");
     }
     pending.claimed = true;
+    logDocumentTool("claimed", pending, {
+      elapsedMs: Date.now() - pending.requestedAt,
+    });
   }
 
   async respondToDocumentTool(
@@ -667,6 +780,11 @@ export class AssistantService {
       };
       text = JSON.stringify(responseResult);
     }
+    logDocumentTool("completed", pending, {
+      elapsedMs: Date.now() - pending.requestedAt,
+      result: summarizeInstrumentationValue(responseResult),
+      revision: result.revision,
+    });
     clearTimeout(pending.timeout);
     this.pendingDocumentTools.delete(callId);
     pending.responder.resolve({
@@ -1019,6 +1137,14 @@ export class AssistantService {
       !DOCUMENT_TOOL_NAMES.has(tool) ||
       !callId
     ) {
+      logDocumentToolRequest("rejected", {
+        workspaceId: active.workspace.id,
+        runId: active.run.id,
+        callId,
+        tool,
+        reason: "unavailable-tool-or-scope",
+        arguments: argumentsValue,
+      });
       responder.resolve({
         contentItems: [
           { type: "inputText", text: JSON.stringify({ success: false, error: "That document tool is not available." }) },
@@ -1032,6 +1158,14 @@ export class AssistantService {
       argumentsValue,
     );
     if (!validatedArguments.success) {
+      logDocumentToolRequest("rejected", {
+        workspaceId: active.workspace.id,
+        runId: active.run.id,
+        callId,
+        tool,
+        reason: validatedArguments.error,
+        arguments: argumentsValue,
+      });
       responder.resolve({
         contentItems: [
           {
@@ -1057,8 +1191,17 @@ export class AssistantService {
       arguments: validatedArguments.arguments,
       expiresAt: new Date(Date.now() + DOCUMENT_TOOL_TIMEOUT_MS).toISOString(),
     };
+    const requestedAt = Date.now();
     const timeout = setTimeout(() => {
       this.pendingDocumentTools.delete(callId);
+      logDocumentToolRequest("timed-out", {
+        workspaceId: active.workspace.id,
+        runId: active.run.id,
+        callId,
+        tool,
+        elapsedMs: Date.now() - requestedAt,
+        arguments: validatedArguments.arguments,
+      });
       responder.resolve({
         contentItems: [
           { type: "inputText", text: JSON.stringify({ success: false, error: "The document editor did not respond in time." }) },
@@ -1072,7 +1215,15 @@ export class AssistantService {
       responder,
       active,
       claimed: false,
+      requestedAt,
       timeout,
+    });
+    logDocumentToolRequest("requested", {
+      workspaceId: active.workspace.id,
+      runId: active.run.id,
+      callId,
+      tool,
+      arguments: validatedArguments.arguments,
     });
     await this.publish(active, { type: "document-tool.requested", call });
   }
@@ -1080,6 +1231,10 @@ export class AssistantService {
   private async handleCodexExit(error: Error): Promise<void> {
     for (const pending of this.pendingDocumentTools.values()) {
       clearTimeout(pending.timeout);
+      logDocumentTool("cancelled", pending, {
+        elapsedMs: Date.now() - pending.requestedAt,
+        reason: "codex-exited",
+      });
       pending.responder.resolve({
         contentItems: [
           { type: "inputText", text: JSON.stringify({ success: false, error: "Codex exited before the document action completed." }) },
@@ -1388,7 +1543,7 @@ function buildCodexInput(
       `The user is currently viewing ${context.path}.`,
       `The durable document revision before this turn is ${context.expectedRevision}.`,
       "Use the document namespace tools for all inspection and edits.",
-      "Use suggest_change for reviewable text edits and keep each call within one paragraph.",
+      "Use append_paragraphs once for new multi-paragraph structure. Use suggest_change for reviewable replacements inside existing paragraphs.",
       "Use apply_formatting or set_paragraph_style when the user asks for formatting.",
       "[/Heydesk document context]",
       "",
@@ -1411,8 +1566,10 @@ function buildDocumentDeveloperInstructions(path: string): string {
     `You are editing ${path} inside Heydesk.`,
     "Use only the document namespace tools. Never use shell commands, filesystem writes, or network access.",
     "Inspect the relevant text and pending changes before mutating the document, and use the stable paraId returned by the read tools.",
-    "Use suggest_change for reviewable text replacements, insertions, and deletions. Each suggestion must target exactly one paragraph: search and replaceWith must never contain line breaks. Use one suggest_change call per paragraph and avoid ranges that overlap an unresolved tracked change.",
-    "Use apply_formatting for character styling such as bold, italic, underline, color, highlight, font size, or font family. Use set_paragraph_style for Title, Heading1, Heading2, Quote, Normal, and other styles already defined in the document.",
+    "Use append_paragraphs once when creating new document structure or adding several paragraphs. It can apply Word paragraph styles and run-level formatting while it creates the content. Do not simulate paragraphs with repeated insertions into one paraId.",
+    "Use suggest_change for reviewable replacements and deletions inside existing paragraphs. Each suggestion must target exactly one paragraph: search must identify existing text, and search and replaceWith must never contain line breaks. Avoid ranges that overlap an unresolved tracked change.",
+    "Use apply_formatting for character styling such as bold, italic, underline, color, highlight, font size, or font family. Use set_paragraph_style for Title, Subtitle, Heading1 through Heading6, Quote, Normal, and other styles already defined in the document.",
+    "Express document hierarchy with paragraph styles, not bold text or font size alone. For a structured document, use Title for its title, Subtitle for an optional deck or byline, Heading1 for top-level sections, Heading2 and Heading3 for nested sections, Normal for body paragraphs, and Quote for block quotations.",
     "Formatting and paragraph-style tools apply direct edits rather than tracked changes. Use them only when the user explicitly asks for formatting or when formatting is essential to the requested result.",
     "Never accept or reject tracked changes on the user's behalf.",
   ].join(" ");
@@ -1441,7 +1598,8 @@ function documentDynamicTools() {
           name: schema.function.name,
           description: schema.function.description,
           inputSchema: schema.function.parameters,
-        })),
+        }))
+        .concat(appendParagraphsDynamicTool),
     },
   ];
 }
@@ -1459,7 +1617,9 @@ export function validateDocumentToolArguments(
         ? applyFormattingArgumentsSchema
         : tool === "set_paragraph_style"
           ? setParagraphStyleArgumentsSchema
-          : undefined;
+          : tool === "append_paragraphs"
+            ? appendParagraphsArgumentsSchema
+            : undefined;
   if (!schema) return { success: true, arguments: argumentsValue };
   const result = schema.safeParse(argumentsValue);
   if (result.success) return { success: true, arguments: result.data };
@@ -1469,6 +1629,88 @@ export function validateDocumentToolArguments(
       result.error.issues[0]?.message ??
       `The arguments for ${tool} are invalid.`,
   };
+}
+
+function logDocumentTool(
+  phase: "claimed" | "completed" | "cancelled",
+  pending: PendingDocumentTool,
+  details: Record<string, unknown> = {},
+): void {
+  logDocumentToolRequest(phase, {
+    workspaceId: pending.active.workspace.id,
+    runId: pending.active.run.id,
+    callId: pending.call.callId,
+    tool: pending.call.tool,
+    arguments: pending.call.arguments,
+    ...details,
+  });
+}
+
+function logDocumentToolRequest(
+  phase:
+    | "requested"
+    | "claimed"
+    | "completed"
+    | "rejected"
+    | "timed-out"
+    | "cancelled",
+  details: Record<string, unknown>,
+): void {
+  if (process.env.NODE_ENV === "test") return;
+  console.info(
+    JSON.stringify({
+      source: "assistant-document-tool",
+      phase,
+      ...Object.fromEntries(
+        Object.entries(details).map(([key, value]) => [
+          key,
+          summarizeInstrumentationValue(value),
+        ]),
+      ),
+    }),
+  );
+}
+
+function summarizeInstrumentationValue(
+  value: unknown,
+  depth = 0,
+): unknown {
+  if (typeof value === "string") {
+    if (value.length <= 500) return value;
+    return {
+      preview: value.slice(0, 500),
+      length: value.length,
+      truncated: true,
+    };
+  }
+  if (
+    value === null ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "undefined"
+  ) {
+    return value;
+  }
+  if (depth >= 3) return "[nested value]";
+  if (Array.isArray(value)) {
+    return {
+      items: value
+        .slice(0, 10)
+        .map((item) => summarizeInstrumentationValue(item, depth + 1)),
+      length: value.length,
+      ...(value.length > 10 ? { truncated: true } : {}),
+    };
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value).slice(0, 20);
+    return Object.fromEntries(
+      entries.map(([key, item]) => [
+        key,
+        summarizeInstrumentationValue(item, depth + 1),
+      ]),
+    );
+  }
+  return String(value);
 }
 
 function mapPlanStatus(
