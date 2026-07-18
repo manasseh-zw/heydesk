@@ -1,6 +1,6 @@
 # heydesk
 
-This project was created with [Better-T-Stack](https://github.com/AmanVarshney01/create-better-t-stack), a modern TypeScript stack that combines React, TanStack Router, Hono, and more.
+This project was created with Better-T-Stack, a modern TypeScript stack that combines React, TanStack Router, Hono, and more.
 
 ## Features
 
@@ -33,7 +33,6 @@ pnpm run db:local
 ```
 
 2. Update your `.env` file in the `apps/server` directory with the appropriate connection details if needed.
-
 3. Apply the schema to your database:
 
 ```bash
@@ -105,3 +104,4 @@ client operation, Hono route, domain service, and durable boundary.
 - `pnpm run db:migrate`: Run database migrations
 - `pnpm run db:studio`: Open database studio UI
 - `pnpm run db:local`: Start the local SQLite database
+

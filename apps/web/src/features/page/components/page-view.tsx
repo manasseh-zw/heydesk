@@ -50,6 +50,11 @@ import {
   savePage,
 } from "../page.service";
 import {
+  clearPageQuickEditSuggestion,
+  PageQuickEditSuggestion,
+  showPageQuickEditSuggestion,
+} from "../page-quick-edit-suggestion";
+import {
   PageRevisionConflictError,
   type Page,
   type QuickEditCommand,
@@ -148,6 +153,7 @@ function LoadedPageView({
   const editorBaselineRef = useRef<string | null>(null);
   const previousRunIdRef = useRef<string | undefined>(undefined);
   const abortQuickEditRef = useRef<AbortController | undefined>(undefined);
+  const sourceEditorRef = useRef<HTMLTextAreaElement>(null);
 
   const setCurrentContent = useCallback((next: string, state: SaveState) => {
     contentRef.current = next;
@@ -161,6 +167,7 @@ function LoadedPageView({
       StarterKit,
       Markdown,
       Highlight,
+      PageQuickEditSuggestion,
     ],
     content: page.content,
     contentType: "markdown",
@@ -208,6 +215,7 @@ function LoadedPageView({
     (next: Page, syncEditor = true) => {
       suppressEditorUpdateRef.current = true;
       if (syncEditor && editor && next.editorMode === "rich") {
+        clearPageQuickEditSuggestion(editor);
         editor.commands.setContent(next.content, {
           contentType: "markdown",
           emitUpdate: false,
@@ -374,11 +382,24 @@ function LoadedPageView({
       );
       let next: string;
       if (editor && page.editorMode === "rich") {
+        const previousDocument = editor.state.doc;
         suppressEditorUpdateRef.current = true;
         editor.commands.insertContentAt(range, result.replacementMarkdown, {
           contentType: "markdown",
           updateSelection: true,
         });
+        const changedFrom = previousDocument.content.findDiffStart(
+          editor.state.doc.content,
+        );
+        const changedTo = previousDocument.content.findDiffEnd(
+          editor.state.doc.content,
+        );
+        if (changedFrom !== null && changedTo) {
+          showPageQuickEditSuggestion(editor, {
+            from: changedFrom,
+            to: changedTo.b,
+          });
+        }
         next = editor.getMarkdown();
         editorBaselineRef.current = next;
         suppressEditorUpdateRef.current = false;
@@ -387,6 +408,18 @@ function LoadedPageView({
           originalContent.slice(0, range.from) +
           result.replacementMarkdown +
           originalContent.slice(range.to);
+        const replacementRange = {
+          from: range.from,
+          to: range.from + result.replacementMarkdown.length,
+        };
+        setSourceSelection(replacementRange);
+        window.requestAnimationFrame(() => {
+          sourceEditorRef.current?.focus();
+          sourceEditorRef.current?.setSelectionRange(
+            replacementRange.from,
+            replacementRange.to,
+          );
+        });
       }
       setCurrentContent(next, "unsaved");
       setQuickEditPreview({
@@ -407,18 +440,23 @@ function LoadedPageView({
     setCurrentContent(quickEditPreview.originalContent, "saved");
     if (editor && page.editorMode === "rich") {
       suppressEditorUpdateRef.current = true;
+      clearPageQuickEditSuggestion(editor);
       editor.commands.setContent(quickEditPreview.originalContent, {
         contentType: "markdown",
         emitUpdate: false,
       });
       editorBaselineRef.current = editor.getMarkdown();
       suppressEditorUpdateRef.current = false;
+    } else {
+      setSourceSelection(quickEditPreview.selection);
     }
     setQuickEditPreview(null);
   };
 
   const applyQuickEdit = async () => {
     await saveNow("quick-edit");
+    if (editor) clearPageQuickEditSuggestion(editor);
+    sourceEditorRef.current?.blur();
     setQuickEditPreview(null);
   };
 
@@ -548,10 +586,12 @@ function LoadedPageView({
                 />
               </div>
               <Textarea
-                className="min-h-[calc(100svh-11rem)] resize-none rounded-none border-0 bg-transparent font-mono text-sm leading-7 shadow-none focus-visible:ring-0"
-                disabled={editorLocked}
+                className="min-h-[calc(100svh-11rem)] resize-none rounded-none border-0 bg-transparent font-mono text-sm leading-7 shadow-none selection:bg-primary/25 focus-visible:ring-0"
+                disabled={isPageRun || quickEditLoading}
                 onChange={changeSource}
                 onSelect={selectSource}
+                readOnly={!!quickEditPreview}
+                ref={sourceEditorRef}
                 spellCheck={false}
                 value={content}
               />
@@ -580,7 +620,7 @@ function LoadedPageView({
                   Suggested edit
                 </span>
                 <Button onClick={() => void applyQuickEdit()} size="sm">
-                  <CheckIcon /> Apply
+                  <CheckIcon /> Accept
                 </Button>
                 <Button onClick={discardQuickEdit} size="sm" variant="outline">
                   <XIcon /> Discard

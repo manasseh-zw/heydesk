@@ -1,3 +1,6 @@
 {
-  "extends": "@heydesk/config/tsconfig.base.json"
+  "extends": "@heydesk/config/tsconfig.base.json",
+  "exclude": [
+    "opensrc"
+  ]
 }

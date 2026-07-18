@@ -1,7 +1,6 @@
 # Heydesk — Product and Engineering Context
 
-Implementation decisions and the iteration history behind this context are
-recorded in [architecture-decisions.md](architecture-decisions.md).
+The implementation decisions and iteration history behind this context are documented in `architecture-decisions.md`.
 
 ## North star
 
@@ -15,9 +14,11 @@ Heydesk should feel like a calm, well-organized company operating system: part k
 
 ## The problem
 
-Important work context is usually fragmented across markdown files, documents, spreadsheets, meeting notes, task trackers, and conversations. Existing tools can store pieces of this information, but turning the information into a coherent update, decision, plan, or formal document still requires manual context gathering and repeated prompting.
+Important work context is scattered across markdown files, documents, spreadsheets, meeting notes, task trackers, and conversations. Each tool may store its own piece of the story, but none of them reliably connects the facts, decisions, and open questions that matter for the next piece of work.
 
-Heydesk models the workspace as a connected body of company knowledge rather than a collection of isolated chat sessions or files.
+As a result, people spend time searching for source material, reconstructing past decisions, checking whether information is current, and repeating the same context in multiple places. Producing a trustworthy update, plan, decision record, or formal document becomes a manual synthesis task—and important details can be missed along the way.
+
+Heydesk connects company knowledge, turns context into useful work, and leaves an editable, durable result.
 
 ## Product thesis
 
@@ -79,11 +80,11 @@ Properties describe typed fields on records and pages. They may include text, nu
 
 ### Documents
 
-Documents are durable outputs such as board updates, company reports, proposals, operating plans, meeting briefs, and formal Word documents. A document may draw from many pages and collections while retaining provenance about the context used to create it.
+Documents are durable outputs, including board updates, company reports, proposals, operating plans, meeting briefs, and formal Word files. A document may draw on multiple pages and collections while preserving the provenance of the context used to create it.
 
 ### References
 
-References identify the pages, records, files, or workspace locations that support an answer or generated artifact. They help the user inspect and trust the result.
+References identify the pages, records, files, or workspace locations that support an answer or generated artifact. They help the user inspect and trust the result. that means.
 
 ### Runs and actions
 
