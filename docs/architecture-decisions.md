@@ -345,6 +345,63 @@ that an export standard defines the entire UI. Frictionless Table Schema is a
 useful reference for fields, types, constraints, and tabular interchange:
 [Table Schema](https://specs.frictionlessdata.io/table-schema/).
 
+### ADR-016 — Project Codex through Heydesk events into TanStack AI
+
+**Decision:** The Codex app-server remains Heydesk's agent runtime. Raw v2
+JSON-RPC notifications are normalized into a product-owned `AssistantEvent`
+contract, persisted in the workspace database, and projected into AG-UI for a
+custom TanStack AI `SubscribeConnectionAdapter`. Nauval components render the
+resulting `UIMessage.parts` and Heydesk custom events.
+
+```text
+Codex app-server
+  -> canonical AssistantEvent
+  -> AG-UI StreamChunk
+  -> TanStack AI useChat
+  -> Nauval presentation
+```
+
+**Why:** Codex already owns threads, turns, tools, approvals, interruption, and
+filesystem activity. Treating it as a generic language-model provider would
+flatten those lifecycle details and create a competing agent loop. The
+canonical contract also keeps durable state independent from the current
+pre-1.0 TanStack package versions.
+
+**State ownership:** TanStack AI owns reconciled chat messages and streaming
+status. TanStack Query owns readiness, active-run metadata, pending Codex
+interactions, draft diffs, and committed artifacts. Codex approvals are
+resolved directly through the Heydesk interaction endpoint, not through a
+TanStack tool-continuation API.
+
+**Safety:** Turns use `untrusted` approval with workspace-scoped write access
+and network disabled. Only non-move Markdown/MDX additions and updates inside
+the canonical workspace can be accepted automatically; commands, deletes,
+moves, other file types, hidden state, permission expansion, and symlink
+escapes require review or are declined.
+
+**Deferred:** Mid-turn steering, voice/realtime, direct Tiptap mutation, Yjs,
+and a Vercel AI SDK projection remain outside this slice.
+
+### ADR-017 — Keep live assistant end-to-end tests opt-in
+
+**Decision:** The normal test suite remains deterministic and offline. A
+separate `pnpm test:assistant-e2e` command runs a disposable workspace through
+the real HTTP route, assistant service, local Codex app-server, event mapper,
+and SQLite snapshot boundary. The test requires the local ChatGPT session and
+asserts the exact configured model plus a deterministic text response.
+
+The default model is `gpt-5.6-luna`. It is sent explicitly to Codex and the
+thread response must confirm the same model; Heydesk does not silently fall
+back to Sol, Terra, or another release. `CODEX_MODEL` remains the deliberate
+override for environments that choose a different model.
+
+**Why not Evalite yet:** Evalite is appropriate for datasets, scorers, traces,
+and comparative quality or regression evaluation. This first live integration
+test needs binary discovery, authentication, protocol compatibility, stream
+completion, and persistence assertions. Those are deterministic test
+conditions rather than model-quality scores. Evalite can later call the same
+assistant boundary when Heydesk has a representative prompt corpus.
+
 ## Challenges and what they taught us
 
 ### Protocol shape is part of the product
