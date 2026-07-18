@@ -40,7 +40,7 @@ import {
 import { Button } from "@heydesk/ui/components/button";
 import { Textarea } from "@heydesk/ui/components/textarea";
 
-import { PageAssistantRail } from "@/features/assistant/components/page-assistant-rail";
+import { AssistantRail } from "@/features/assistant/components/assistant-rail";
 import { useAssistantSession } from "@/features/assistant/assistant-session";
 import type { WorkspaceSummary } from "@/features/workspace/workspace.types";
 import { pageKeys, pageQueryOptions } from "../page.queries";
@@ -646,7 +646,7 @@ function LoadedPageView({
         )}
       </section>
 
-      <PageAssistantRail
+      <AssistantRail
         disabled={!!quickEditPreview || quickEditLoading}
         mobileOpen={mobileRailOpen}
         onMobileOpenChange={setMobileRailOpen}

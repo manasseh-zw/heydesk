@@ -4,6 +4,8 @@ export const assistantKeys = {
   models: () => [...assistantKeys.all, "models"] as const,
   workspace: (workspaceId: string) =>
     [...assistantKeys.all, "workspace", workspaceId] as const,
-  state: (workspaceId: string) =>
-    [...assistantKeys.workspace(workspaceId), "state"] as const,
+  scope: (workspaceId: string, scopeKey: string) =>
+    [...assistantKeys.workspace(workspaceId), "scope", scopeKey] as const,
+  state: (workspaceId: string, scopeKey = "workspace") =>
+    [...assistantKeys.scope(workspaceId, scopeKey), "state"] as const,
 };

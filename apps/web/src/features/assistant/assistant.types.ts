@@ -21,17 +21,20 @@ export type AssistantRun = {
     | "failed"
     | "interrupted";
   userText: string;
+  scope: AssistantScope;
   context?: AssistantRunContext;
   preferences?: AssistantRunPreferences;
   createdAt: string;
   completedAt?: string;
 };
 
-export type AssistantRunContext = {
-  kind: "page";
-  path: string;
-  expectedRevision: string;
-};
+export type AssistantScope =
+  | { kind: "workspace" }
+  | { kind: "document"; path: string };
+
+export type AssistantRunContext =
+  | { kind: "page"; path: string; expectedRevision: string }
+  | { kind: "document"; path: string; expectedRevision: string };
 
 export type AssistantRunPreferences = {
   model: string;
@@ -90,10 +93,19 @@ export type CanonicalEvent = {
 
 export type AssistantSnapshot = {
   workspaceId: string;
+  scope: AssistantScope;
   activeRun: AssistantRun | null;
   recentRuns: AssistantRun[];
   events: CanonicalEvent[];
   lastSequence: number;
+};
+
+export type AssistantDocumentToolCall = {
+  callId: string;
+  runId: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+  expiresAt: string;
 };
 
 export type AssistantClientState = {
@@ -103,6 +115,7 @@ export type AssistantClientState = {
   plan: AssistantPlanStep[];
   fileDiffs: unknown[];
   artifacts: AssistantArtifact[];
+  documentToolCalls: AssistantDocumentToolCall[];
   error?: { code?: string; message: string };
 };
 

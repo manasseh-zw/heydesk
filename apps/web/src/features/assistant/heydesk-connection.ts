@@ -8,6 +8,7 @@ import { assistantApiUrl, request } from "./assistant.service";
 import type {
   AssistantRunContext,
   AssistantRunPreferences,
+  AssistantScope,
 } from "./assistant.types";
 
 export type HeydeskConnection = SubscribeConnectionAdapter;
@@ -18,12 +19,13 @@ export function createHeydeskConnection(
     context?: AssistantRunContext;
     preferences?: AssistantRunPreferences;
   } = () => ({}),
+  scope: AssistantScope = { kind: "workspace" },
 ): HeydeskConnection {
   let activeRunId: string | null = null;
 
   return {
     subscribe(abortSignal) {
-      return createEventStream(workspaceId, abortSignal);
+      return createEventStream(workspaceId, scope, abortSignal);
     },
     async send(messages, _data, abortSignal, runContext) {
       const runId = requireRunId(runContext);
@@ -43,7 +45,12 @@ export function createHeydeskConnection(
           `/api/workspaces/${encodeURIComponent(workspaceId)}/assistant/runs`,
           {
             method: "POST",
-            body: JSON.stringify({ runId, message, ...options }),
+            body: JSON.stringify({
+              runId,
+              message,
+              ...(scope.kind === "document" ? { scope } : {}),
+              ...options,
+            }),
             signal: abortSignal,
           },
         );
@@ -56,13 +63,25 @@ export function createHeydeskConnection(
 
 async function* createEventStream(
   workspaceId: string,
+  scope: AssistantScope,
   abortSignal?: AbortSignal,
 ): AsyncIterable<StreamChunk> {
-  const storageKey = `heydesk:assistant:last-event:${workspaceId}`;
+  const scopeKey = scope.kind === "document" ? `document:${scope.path}` : "workspace";
+  const storageKey =
+    scope.kind === "document"
+      ? `heydesk:assistant:last-event:${workspaceId}:${scopeKey}`
+      : `heydesk:assistant:last-event:${workspaceId}`;
   const lastEventId = sessionStorage.getItem(storageKey);
   const after = lastEventId?.split(":")[0];
+  const search = new URLSearchParams();
+  if (after) search.set("after", after);
+  if (scope.kind === "document") {
+    search.set("scope", "document");
+    search.set("path", scope.path);
+  }
+  const query = search.size > 0 ? `?${search}` : "";
   const url = assistantApiUrl(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/assistant/events${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/assistant/events${query}`,
   );
   const source = new EventSource(url);
   const queue: StreamChunk[] = [];

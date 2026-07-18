@@ -10,7 +10,7 @@ import {
 import type { WorkspaceSummary } from "@/features/workspace/workspace.types";
 import { AssistantHome } from "./assistant-home";
 
-type PageAssistantRailProps = {
+type AssistantRailProps = {
   disabled: boolean;
   mobileOpen: boolean;
   onMobileOpenChange: (open: boolean) => void;
@@ -19,11 +19,12 @@ type PageAssistantRailProps = {
   onSend: (message: string) => Promise<void>;
   onWidthChange: (width: number) => void;
   open: boolean;
+  title?: string;
   width: number;
   workspace: WorkspaceSummary;
 };
 
-export function PageAssistantRail({
+export function AssistantRail({
   disabled,
   mobileOpen,
   onMobileOpenChange,
@@ -32,9 +33,10 @@ export function PageAssistantRail({
   onSend,
   onWidthChange,
   open,
+  title = "Page assistant",
   width,
   workspace,
-}: PageAssistantRailProps) {
+}: AssistantRailProps) {
   return (
     <>
       {open && (
@@ -67,7 +69,7 @@ export function PageAssistantRail({
             role="separator"
           />
           <div className="flex h-10 shrink-0 items-center justify-between border-b px-3">
-            <span className="text-sm font-medium">Page assistant</span>
+            <span className="text-sm font-medium">{title}</span>
             <Button
               aria-label="Close assistant"
               onClick={() => onOpenChange(false)}
@@ -91,7 +93,7 @@ export function PageAssistantRail({
 
       <Sheet onOpenChange={onMobileOpenChange} open={mobileOpen}>
         <SheetContent className="w-[min(92vw,28rem)] max-w-none p-0" side="right">
-          <SheetTitle className="sr-only">Page assistant</SheetTitle>
+          <SheetTitle className="sr-only">{title}</SheetTitle>
           <AssistantHome
             compactSurface
             disabled={disabled}

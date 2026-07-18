@@ -7,6 +7,7 @@ describe("snapshotToMessages", () => {
   it("restores persisted workspace activity in chronological order", () => {
     const snapshot: AssistantSnapshot = {
       workspaceId: "workspace-1",
+      scope: { kind: "workspace" },
       activeRun: null,
       recentRuns: [
         {
@@ -14,6 +15,7 @@ describe("snapshotToMessages", () => {
           workspaceId: "workspace-1",
           threadId: "thread-1",
           status: "completed",
+          scope: { kind: "workspace" },
           userText: "Create a page",
           createdAt: "2026-07-18T00:00:00.000Z",
           completedAt: "2026-07-18T00:00:01.000Z",

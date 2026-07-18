@@ -7,6 +7,7 @@ import type {
   AssistantModel,
   AssistantReadiness,
   AssistantSnapshot,
+  AssistantScope,
 } from "./assistant.types";
 
 export async function getAssistantReadiness(): Promise<AssistantReadiness> {
@@ -26,11 +27,39 @@ export async function startAssistantLogin(): Promise<{
 
 export async function getAssistantSnapshot(
   workspaceId: string,
+  scope: AssistantScope = { kind: "workspace" },
 ): Promise<AssistantConversationSnapshot> {
   const snapshot = await request<AssistantSnapshot>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/assistant`,
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/assistant${assistantScopeQuery(scope)}`,
   );
   return { ...snapshot, messages: snapshotToMessages(snapshot) };
+}
+
+export async function claimDocumentTool(
+  workspaceId: string,
+  callId: string,
+): Promise<void> {
+  await request(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/assistant/tool-calls/${encodeURIComponent(callId)}/claim`,
+    { method: "POST" },
+  );
+}
+
+export async function respondToDocumentTool(
+  workspaceId: string,
+  callId: string,
+  result: { success: boolean; data?: unknown; error?: string; revision?: string },
+): Promise<void> {
+  await request(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/assistant/tool-calls/${encodeURIComponent(callId)}/respond`,
+    { method: "POST", body: JSON.stringify(result) },
+  );
+}
+
+export function assistantScopeQuery(scope: AssistantScope): string {
+  return scope.kind === "document"
+    ? `?scope=document&path=${encodeURIComponent(scope.path)}`
+    : "";
 }
 
 export async function respondToAssistantInteraction(

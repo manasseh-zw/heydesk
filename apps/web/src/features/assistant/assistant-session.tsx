@@ -10,6 +10,7 @@ import { useChat } from "@tanstack/ai-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { pageKeys } from "@/features/page/page.queries";
+import { documentKeys } from "@/features/document/document.queries";
 import type { WorkspaceSummary } from "@/features/workspace/workspace.types";
 import { assistantKeys } from "./assistant.queries";
 import {
@@ -24,6 +25,7 @@ import type {
   AssistantRun,
   AssistantRunContext,
   AssistantRunPreferences,
+  AssistantScope,
 } from "./assistant.types";
 import { createHeydeskConnection } from "./heydesk-connection";
 
@@ -33,6 +35,7 @@ const emptyState: AssistantClientState = {
   plan: [],
   fileDiffs: [],
   artifacts: [],
+  documentToolCalls: [],
 };
 
 type AssistantSessionValue = {
@@ -61,9 +64,11 @@ const AssistantSessionContext = createContext<AssistantSessionValue | null>(null
 export function AssistantSessionProvider({
   children,
   workspace,
+  scope = { kind: "workspace" },
 }: {
   children: ReactNode;
   workspace: WorkspaceSummary;
+  scope?: AssistantScope;
 }) {
   const queryClient = useQueryClient();
   const restoredRef = useRef(false);
@@ -72,18 +77,19 @@ export function AssistantSessionProvider({
     context?: AssistantRunContext;
     preferences?: AssistantRunPreferences;
   }>({});
+  const scopeId = scope.kind === "document" ? `document:${scope.path}` : "workspace";
   const connection = useMemo(
     () =>
       createHeydeskConnection(workspace.id, () => {
         const value = nextRunOptionsRef.current;
         nextRunOptionsRef.current = {};
         return value;
-      }),
-    [workspace.id],
+      }, scope),
+    [scopeId, workspace.id],
   );
   const snapshotQuery = useQuery({
-    queryKey: assistantKeys.workspace(workspace.id),
-    queryFn: () => getAssistantSnapshot(workspace.id),
+    queryKey: assistantKeys.scope(workspace.id, scopeId),
+    queryFn: () => getAssistantSnapshot(workspace.id, scope),
   });
   const readinessQuery = useQuery({
     queryKey: assistantKeys.readiness(),
@@ -92,7 +98,7 @@ export function AssistantSessionProvider({
       query.state.data?.status === "ready" ? false : 3_000,
   });
   const clientStateQuery = useQuery({
-    queryKey: assistantKeys.state(workspace.id),
+    queryKey: assistantKeys.state(workspace.id, scopeId),
     queryFn: async () => emptyState,
     initialData: emptyState,
     staleTime: Number.POSITIVE_INFINITY,
@@ -100,13 +106,13 @@ export function AssistantSessionProvider({
 
   useEffect(() => {
     restoredRef.current = false;
-  }, [workspace.id]);
+  }, [scopeId, workspace.id]);
 
   const updateState = (
     updater: (state: AssistantClientState) => AssistantClientState,
   ) => {
     queryClient.setQueryData<AssistantClientState>(
-      assistantKeys.state(workspace.id),
+      assistantKeys.state(workspace.id, scopeId),
       (current) => updater(current ?? emptyState),
     );
   };
@@ -114,7 +120,7 @@ export function AssistantSessionProvider({
   const chat = useChat({
     connection,
     id: `heydesk:${workspace.id}`,
-    threadId: workspace.id,
+    threadId: `${workspace.id}:${scopeId}`,
     live: true,
     initialMessages: [],
     onCustomEvent(name, value) {
@@ -124,6 +130,9 @@ export function AssistantSessionProvider({
       if (name === "heydesk:artifact-committed") {
         void queryClient.invalidateQueries({
           queryKey: pageKeys.all(workspace.id),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: documentKeys.all(workspace.id),
         });
       }
     },
@@ -230,6 +239,25 @@ function reduceCustomEvent(
       interactions: state.interactions.filter((item) => item.id !== id),
     };
   }
+  if (name === "heydesk:document-tool-call") {
+    const call = value as AssistantClientState["documentToolCalls"][number];
+    return {
+      ...state,
+      documentToolCalls: [
+        ...state.documentToolCalls.filter((item) => item.callId !== call.callId),
+        call,
+      ],
+    };
+  }
+  if (name === "heydesk:document-tool-resolved") {
+    const callId = recordString(value, "callId");
+    return {
+      ...state,
+      documentToolCalls: state.documentToolCalls.filter(
+        (item) => item.callId !== callId,
+      ),
+    };
+  }
   if (name === "heydesk:run-snapshot") {
     const record = asRecord(value);
     const run = (record.activeRun ??
@@ -257,6 +285,27 @@ function restoreClientState(
   for (const { event, runId } of snapshot.events) {
     if (event.type === "artifact.committed") {
       restored = upsertArtifact(restored, event.artifact, `${runId}:assistant`);
+    }
+    if (event.type === "document-tool.requested") {
+      const call = event.call as AssistantClientState["documentToolCalls"][number];
+      restored = {
+        ...restored,
+        documentToolCalls: [
+          ...restored.documentToolCalls.filter(
+            (item) => item.callId !== call.callId,
+          ),
+          call,
+        ],
+      };
+    }
+    if (event.type === "document-tool.resolved") {
+      const callId = typeof event.callId === "string" ? event.callId : undefined;
+      restored = {
+        ...restored,
+        documentToolCalls: restored.documentToolCalls.filter(
+          (item) => item.callId !== callId,
+        ),
+      };
     }
   }
   return restored;

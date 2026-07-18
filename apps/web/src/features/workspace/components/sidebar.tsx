@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ChevronRight,
   File,
   FileText,
+  FileUp,
   Home,
   Plus,
   Search,
@@ -30,36 +31,66 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@heydesk/ui/components/sidebar";
+import { Button } from "@heydesk/ui/components/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@heydesk/ui/components/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@heydesk/ui/components/dropdown-menu";
+import { Input } from "@heydesk/ui/components/input";
 
 import { LogoMark } from "@/components/logo";
 import { pagesQueryOptions } from "@/features/page/page.queries";
 import type { PageSummary } from "@/features/page/page.types";
+import { documentsQueryOptions } from "@/features/document/document.queries";
+import { preloadDocumentView } from "@/features/document/components/lazy-document-view";
+import type { DocumentSummary } from "@/features/document/document.types";
 import type { WorkspaceSummary } from "../workspace.types";
 
 type WorkspaceSidebarProps = {
   workspace: WorkspaceSummary;
-  onCreateDocument: () => void;
+  onCreateDocument: (name: string) => Promise<void>;
+  onImportDocument: (file: File) => Promise<void>;
   onCreatePage: () => void;
   onOpenPage: (path: string) => void;
+  onOpenDocument: (path: string) => void;
   onOpenHome: () => void;
   onSwitchWorkspace: () => void;
   activePagePath: string | null;
+  activeDocumentPath: string | null;
 };
 
 export function WorkspaceSidebar({
   workspace,
   onCreateDocument,
+  onImportDocument,
   onCreatePage,
   onOpenPage,
+  onOpenDocument,
   onOpenHome,
   onSwitchWorkspace,
   activePagePath,
+  activeDocumentPath,
 }: WorkspaceSidebarProps) {
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const pagesQuery = useQuery(pagesQueryOptions(workspace.id));
+  const documentsQuery = useQuery(documentsQueryOptions(workspace.id));
   const filteredPages = useFilteredItems(pagesQuery.data ?? [], query);
-  const filteredDocuments: NavigationItem[] = [];
+  const filteredDocuments = useFilteredItems(
+    (documentsQuery.data ?? []).map(documentNavigationItem),
+    query,
+  );
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -110,7 +141,7 @@ export function WorkspaceSidebar({
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
-                isActive={activePagePath === null}
+                isActive={activePagePath === null && activeDocumentPath === null}
                 onClick={onOpenHome}
                 tooltip="Home"
               >
@@ -136,10 +167,17 @@ export function WorkspaceSidebar({
           document
           items={filteredDocuments}
           label="Documents"
-          onAdd={onCreateDocument}
-          onOpen={() => undefined}
-          activePath={null}
-          loading={false}
+          addControl={
+            <DocumentAddMenu
+              onCreate={onCreateDocument}
+              onImport={onImportDocument}
+            />
+          }
+          onAdd={() => undefined}
+          onOpen={onOpenDocument}
+          onItemIntent={() => void preloadDocumentView()}
+          activePath={activeDocumentPath}
+          loading={documentsQuery.isPending}
           searchQuery={query}
         />
       </SidebarContent>
@@ -165,10 +203,12 @@ type ContentSectionProps = {
   items: NavigationItem[];
   label: string;
   onAdd: () => void;
+  addControl?: ReactNode;
   onOpen: (path: string) => void;
   activePath: string | null;
   loading: boolean;
   searchQuery: string;
+  onItemIntent?: () => void;
 };
 
 function ContentSection({
@@ -177,10 +217,12 @@ function ContentSection({
   items,
   label,
   onAdd,
+  addControl,
   onOpen,
   activePath,
   loading,
   searchQuery,
+  onItemIntent,
 }: ContentSectionProps) {
   const ItemIcon = document ? FileText : File;
 
@@ -191,9 +233,11 @@ function ContentSection({
           <ChevronRight className="transition-transform group-data-open/content-section:rotate-90" />
           {label}
         </SidebarGroupLabel>
-        <SidebarGroupAction aria-label={addLabel} onClick={onAdd} title={addLabel}>
-          <Plus />
-        </SidebarGroupAction>
+        {addControl ?? (
+          <SidebarGroupAction aria-label={addLabel} onClick={onAdd} title={addLabel}>
+            <Plus />
+          </SidebarGroupAction>
+        )}
         <CollapsibleContent>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -203,6 +247,8 @@ function ContentSection({
                     className="pl-7"
                     isActive={activePath === item.path}
                     onClick={() => onOpen(item.path)}
+                    onFocus={onItemIntent}
+                    onPointerEnter={onItemIntent}
                     size="sm"
                     tooltip={item.path}
                   >
@@ -229,6 +275,10 @@ function ContentSection({
 
 type NavigationItem = Pick<PageSummary, "path" | "title">;
 
+function documentNavigationItem(document: DocumentSummary): NavigationItem {
+  return { path: document.path, title: document.name };
+}
+
 function useFilteredItems(items: NavigationItem[], query: string) {
   return useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -237,4 +287,103 @@ function useFilteredItems(items: NavigationItem[], query: string) {
       `${item.title} ${item.path}`.toLocaleLowerCase().includes(normalizedQuery),
     );
   }, [items, query]);
+}
+
+function DocumentAddMenu({
+  onCreate,
+  onImport,
+}: {
+  onCreate: (name: string) => Promise<void>;
+  onImport: (file: File) => Promise<void>;
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!name.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onCreate(name.trim());
+      setDialogOpen(false);
+      setName("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not create document.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const importFile = async (file?: File) => {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onImport(file);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not import document.");
+      setDialogOpen(true);
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          aria-label="Add document"
+          className="absolute top-3.5 right-3 flex aspect-square w-5 items-center justify-center rounded-xl p-0 text-sidebar-foreground outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+          title="Add document"
+        >
+          <Plus className="size-4" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuItem onClick={() => setDialogOpen(true)}>
+            <FileText /> New document
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => inputRef.current?.click()}>
+            <FileUp /> Import Word document
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <input
+        ref={inputRef}
+        accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        className="sr-only"
+        onChange={(event) => void importFile(event.target.files?.[0])}
+        type="file"
+      />
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <form onSubmit={submit}>
+            <DialogHeader>
+              <DialogTitle>New Word document</DialogTitle>
+              <DialogDescription>Create an editable document in this workspace.</DialogDescription>
+            </DialogHeader>
+            <Input
+              autoFocus
+              className="mt-5"
+              disabled={busy}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Document name"
+              value={name}
+            />
+            {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
+            <DialogFooter className="mt-6">
+              <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
+              <Button disabled={busy || !name.trim()} type="submit">
+                {busy ? "Creating…" : "Create"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }
