@@ -42,8 +42,8 @@ const commands: ComposerItem[] = [
   },
   {
     id: "draft-document",
-    label: "Draft a document",
-    description: "Create a durable document from your instructions",
+    label: "Draft a page",
+    description: "Create a durable Markdown page from your instructions",
     icon: <FileTextIcon />,
   },
 ];
@@ -91,11 +91,11 @@ export function HomeComposer({
 
       <Composer
         className={`${compact ? "" : "mt-8"} w-full rounded-4xl border border-border/60 shadow-[0_8px_24px_-16px_rgba(15,23,42,0.18)] focus-within:border-primary/25 focus-within:ring-1 focus-within:ring-primary/20 dark:border-border/70 dark:shadow-[0_8px_24px_-16px_rgba(0,0,0,0.45)]`}
-        disabled={disabled || isRunning}
+        disabled={disabled}
       >
         <ComposerRichInput
           autoFocus={!compact}
-          className="[&_[data-slot=composer-rich-input]]:min-h-20 [&_[data-slot=composer-rich-input]]:px-4 [&_[data-slot=composer-rich-input]]:py-4 [&_[data-slot=composer-rich-input-skeleton]]:min-h-20 [&_[data-slot=composer-rich-input-skeleton]]:px-4 [&_[data-slot=composer-rich-input-skeleton]]:py-4"
+          className={`${compact ? "[&_[data-slot=composer-rich-input]]:max-h-40" : "[&_[data-slot=composer-rich-input]]:max-h-52"} [&_[data-slot=composer-rich-input]]:min-h-20 [&_[data-slot=composer-rich-input]]:px-4 [&_[data-slot=composer-rich-input]]:py-4 [&_[data-slot=composer-rich-input-skeleton]]:min-h-20 [&_[data-slot=composer-rich-input-skeleton]]:px-4 [&_[data-slot=composer-rich-input-skeleton]]:py-4`}
           onSubmit={submit}
           onValueChange={setValue}
           placeholder="Ask Heydesk anything. Type / for actions."

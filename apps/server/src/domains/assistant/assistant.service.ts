@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import { env } from "@heydesk/env/server";
 
@@ -615,16 +616,18 @@ export class AssistantService {
         !(["add", "update"] as const).includes(change.kind as "add" | "update")
       )
         continue;
-      if (!/\.mdx?$/i.test(change.path)) continue;
+      const artifactPath = workspaceRelativePath(
+        active.workspace.path,
+        change.path,
+      );
+      if (!artifactPath || !/\.mdx?$/i.test(artifactPath)) continue;
       await this.publish(active, {
         type: "artifact.committed",
         artifact: {
-          id: `${active.run.id}:${change.path}`,
+          id: `${active.run.id}:${artifactPath}`,
           runId: active.run.id,
-          path: change.path,
-          kind: change.path.toLowerCase().endsWith(".mdx")
-            ? "page"
-            : "document",
+          path: artifactPath,
+          kind: "page",
         },
       });
     }
@@ -869,6 +872,27 @@ function mapFileKind(kind: string): AssistantFileChange["kind"] {
   if (normalized.includes("move") || normalized.includes("rename"))
     return "move";
   return "unknown";
+}
+
+function workspaceRelativePath(
+  workspacePath: string,
+  candidatePath: string,
+): string | undefined {
+  if (!candidatePath) return undefined;
+  const root = resolve(workspacePath);
+  const candidate = isAbsolute(candidatePath)
+    ? resolve(candidatePath)
+    : resolve(root, candidatePath);
+  const path = relative(root, candidate);
+  if (
+    !path ||
+    path === ".." ||
+    path.startsWith(`..${sep}`) ||
+    path.startsWith(sep)
+  ) {
+    return undefined;
+  }
+  return path.split(sep).join("/");
 }
 
 function mapPlanStatus(

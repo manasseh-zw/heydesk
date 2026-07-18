@@ -5,6 +5,7 @@ import { logger } from "hono/logger";
 
 import { workspaceRoutes } from "./domains/workspace/workspace.routes";
 import { assistantRoutes } from "./domains/assistant/assistant.routes";
+import { artifactRoutes } from "./domains/artifact/artifact.routes";
 
 export const app = new Hono();
 
@@ -19,4 +20,5 @@ app.use(
 
 app.get("/", (c) => c.text("OK"));
 app.route("/api/workspaces", workspaceRoutes);
+app.route("/api/workspaces", artifactRoutes);
 app.route("/api", assistantRoutes);

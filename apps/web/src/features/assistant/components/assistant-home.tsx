@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { Fragment, useEffect, useMemo, useRef } from "react";
 import { useChat } from "@tanstack/ai-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -23,6 +23,12 @@ import {
 } from "@/components/ai/exception";
 import { Message, MessageContent } from "@/components/ai/message";
 import { Task, TaskIcon, TaskItem, TaskLabel } from "@/components/ai/task";
+import { Loader } from "@/components/ai/loader";
+import {
+  Reasoning,
+  ReasoningTrigger,
+} from "@/components/ai/reasoning";
+import { artifactKeys } from "@/features/artifact/artifact.queries";
 import { HomeComposer } from "@/features/workspace/components/home-composer";
 import type { WorkspaceSummary } from "@/features/workspace/workspace.types";
 import { assistantKeys } from "../assistant.queries";
@@ -39,10 +45,12 @@ import type {
 } from "../assistant.types";
 import { createHeydeskConnection } from "../heydesk-connection";
 import { AssistantInteractionCard } from "./assistant-interaction";
-import { RenderAssistantPart } from "./render-assistant-part";
+import { CommittedArtifactPreview } from "./committed-artifact-preview";
+import { RenderAssistantMessage } from "./render-assistant-message";
 
 type AssistantHomeProps = {
   workspace: WorkspaceSummary;
+  onOpenArtifact: (path: string) => void;
 };
 
 const emptyState: AssistantClientState = {
@@ -53,13 +61,17 @@ const emptyState: AssistantClientState = {
   artifacts: [],
 };
 
-export function AssistantHome({ workspace }: AssistantHomeProps) {
+export function AssistantHome({
+  workspace,
+  onOpenArtifact,
+}: AssistantHomeProps) {
   const queryClient = useQueryClient();
   const connection = useMemo(
     () => createHeydeskConnection(workspace.id),
     [workspace.id],
   );
   const restoredRef = useRef(false);
+  const latestMessageIdRef = useRef<string | undefined>(undefined);
   const snapshotQuery = useQuery({
     queryKey: assistantKeys.workspace(workspace.id),
     queryFn: () => getAssistantSnapshot(workspace.id),
@@ -93,9 +105,22 @@ export function AssistantHome({ workspace }: AssistantHomeProps) {
     live: true,
     initialMessages: [],
     onCustomEvent(name, value) {
-      updateState((state) => reduceCustomEvent(state, name, value));
+      updateState((state) =>
+        reduceCustomEvent(
+          state,
+          name,
+          value,
+          latestMessageIdRef.current,
+        ),
+      );
+      if (name === "heydesk:artifact-committed") {
+        void queryClient.invalidateQueries({
+          queryKey: artifactKeys.all(workspace.id),
+        });
+      }
     },
   });
+  latestMessageIdRef.current = chat.messages.at(-1)?.id;
 
   useEffect(() => {
     const snapshot = snapshotQuery.data;
@@ -104,7 +129,7 @@ export function AssistantHome({ workspace }: AssistantHomeProps) {
     if (chat.messages.length === 0 && snapshot.messages.length > 0) {
       chat.setMessages(snapshot.messages);
     }
-    updateState((state) => ({ ...state, activeRun: snapshot.activeRun }));
+    updateState((state) => restoreClientState(state, snapshot));
   }, [chat, snapshotQuery.data]);
 
   const state = clientStateQuery.data;
@@ -113,6 +138,8 @@ export function AssistantHome({ workspace }: AssistantHomeProps) {
   const hasMessages = chat.messages.length > 0;
   const readiness = readinessQuery.data;
   const canSend = readiness?.status === "ready";
+  const waitingForFirstAssistantPart =
+    isRunning && chat.messages.at(-1)?.role === "user";
 
   const respond = async (
     interaction: AssistantInteraction,
@@ -155,22 +182,47 @@ export function AssistantHome({ workspace }: AssistantHomeProps) {
       <Conversation className="min-h-0 flex-1">
         <ConversationContent className="px-6 py-8">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-            {chat.messages.map((message) => (
-              <Message
-                key={message.id}
-                type={message.role === "user" ? "outgoing" : "incoming"}
-              >
-                <MessageContent>
-                  {message.parts.map((part, index) => (
-                    <RenderAssistantPart
-                      key={`${message.id}:${index}`}
+            {chat.messages.map((message, messageIndex) => (
+              <Fragment key={message.id}>
+                <Message
+                  type={message.role === "user" ? "outgoing" : "incoming"}
+                >
+                  <MessageContent>
+                    <RenderAssistantMessage
+                      isStreaming={
+                        isRunning &&
+                        message.role === "assistant" &&
+                        messageIndex === chat.messages.length - 1
+                      }
                       outgoing={message.role === "user"}
-                      part={part}
+                      parts={message.parts}
+                    />
+                  </MessageContent>
+                </Message>
+                {state.artifacts
+                  .filter((artifact) => artifact.afterMessageId === message.id)
+                  .map((artifact) => (
+                    <CommittedArtifactPreview
+                      key={artifact.id}
+                      onOpen={onOpenArtifact}
+                      path={artifact.path}
+                      workspaceId={workspace.id}
                     />
                   ))}
+              </Fragment>
+            ))}
+
+            {waitingForFirstAssistantPart && (
+              <Message type="incoming">
+                <MessageContent>
+                  <Reasoning defaultOpen>
+                    <ReasoningTrigger>
+                      <Loader dots variant="shimmer">Thinking</Loader>
+                    </ReasoningTrigger>
+                  </Reasoning>
                 </MessageContent>
               </Message>
-            ))}
+            )}
 
             {state.plan.length > 0 && (
               <Task>
@@ -198,6 +250,23 @@ export function AssistantHome({ workspace }: AssistantHomeProps) {
                 onRespond={(response) => void respond(interaction, response)}
               />
             ))}
+
+            {state.artifacts
+              .filter(
+                (artifact) =>
+                  !artifact.afterMessageId ||
+                  !chat.messages.some(
+                    (message) => message.id === artifact.afterMessageId,
+                  ),
+              )
+              .map((artifact) => (
+                <CommittedArtifactPreview
+                  key={artifact.id}
+                  onOpen={onOpenArtifact}
+                  path={artifact.path}
+                  workspaceId={workspace.id}
+                />
+              ))}
 
             {(chat.error || state.error) && (
               <Exception>
@@ -263,6 +332,7 @@ function reduceCustomEvent(
   state: AssistantClientState,
   name: string,
   value: unknown,
+  latestMessageId?: string,
 ): AssistantClientState {
   if (name === "heydesk:readiness")
     return { ...state, readiness: value as AssistantClientState["readiness"] };
@@ -274,7 +344,7 @@ function reduceCustomEvent(
   if (name === "heydesk:file-diff")
     return { ...state, fileDiffs: Array.isArray(value) ? value : [] };
   if (name === "heydesk:artifact-committed")
-    return { ...state, artifacts: [...state.artifacts, value] };
+    return upsertArtifact(state, value, latestMessageId);
   if (name === "heydesk:interaction-requested") {
     const interaction = value as AssistantInteraction;
     return {
@@ -308,6 +378,53 @@ function reduceCustomEvent(
     return { ...state, activeRun: run ?? state.activeRun };
   }
   return state;
+}
+
+function restoreClientState(
+  state: AssistantClientState,
+  snapshot: Awaited<ReturnType<typeof getAssistantSnapshot>>,
+): AssistantClientState {
+  let restored = { ...state, activeRun: snapshot.activeRun };
+  for (const { event, runId } of snapshot.events) {
+    if (event.type === "artifact.committed") {
+      restored = upsertArtifact(
+        restored,
+        event.artifact,
+        `${runId}:assistant`,
+      );
+    }
+  }
+  return restored;
+}
+
+function upsertArtifact(
+  state: AssistantClientState,
+  value: unknown,
+  afterMessageId?: string,
+): AssistantClientState {
+  const artifact = asRecord(value);
+  if (
+    typeof artifact.id !== "string" ||
+    typeof artifact.runId !== "string" ||
+    typeof artifact.path !== "string" ||
+    artifact.path.startsWith("/") ||
+    artifact.path.split("/").some((segment) => segment === "..") ||
+    (artifact.kind !== "page" && artifact.kind !== "document")
+  ) {
+    return state;
+  }
+  const previous = state.artifacts.find((item) => item.id === artifact.id);
+  const next = {
+    ...(artifact as AssistantClientState["artifacts"][number]),
+    afterMessageId: afterMessageId ?? previous?.afterMessageId,
+  };
+  return {
+    ...state,
+    artifacts: [
+      ...state.artifacts.filter((item) => item.id !== next.id),
+      next,
+    ],
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

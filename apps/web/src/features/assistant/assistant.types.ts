@@ -45,6 +45,14 @@ export type AssistantPlanStep = {
   status: "pending" | "in_progress" | "completed";
 };
 
+export type AssistantArtifact = {
+  id: string;
+  runId: string;
+  path: string;
+  kind: "page" | "document";
+  afterMessageId?: string;
+};
+
 export type CanonicalEvent = {
   sequence: number;
   runId: string;
@@ -67,7 +75,7 @@ export type AssistantClientState = {
   interactions: AssistantInteraction[];
   plan: AssistantPlanStep[];
   fileDiffs: unknown[];
-  artifacts: unknown[];
+  artifacts: AssistantArtifact[];
   error?: { code?: string; message: string };
 };
 

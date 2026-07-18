@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   ChevronRight,
   File,
@@ -31,28 +32,40 @@ import {
 } from "@heydesk/ui/components/sidebar";
 
 import { LogoMark } from "@/components/logo";
+import { artifactsQueryOptions } from "@/features/artifact/artifact.queries";
+import type { ArtifactSummary } from "@/features/artifact/artifact.types";
 import type { WorkspaceSummary } from "../workspace.types";
 
 type WorkspaceSidebarProps = {
   workspace: WorkspaceSummary;
   onCreateDocument: () => void;
   onCreatePage: () => void;
+  onOpenArtifact: (path: string) => void;
+  onOpenHome: () => void;
   onSwitchWorkspace: () => void;
+  activeArtifactPath: string | null;
 };
-
-const pages = ["Welcome", "Company notes", "Weekly planning"];
-const documents = ["Founder update", "Product brief"];
 
 export function WorkspaceSidebar({
   workspace,
   onCreateDocument,
   onCreatePage,
+  onOpenArtifact,
+  onOpenHome,
   onSwitchWorkspace,
+  activeArtifactPath,
 }: WorkspaceSidebarProps) {
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
-  const filteredPages = useFilteredItems(pages, query);
-  const filteredDocuments = useFilteredItems(documents, query);
+  const artifactsQuery = useQuery(artifactsQueryOptions(workspace.id));
+  const filteredPages = useFilteredItems(
+    artifactsQuery.data?.filter((artifact) => artifact.kind === "page") ?? [],
+    query,
+  );
+  const filteredDocuments = useFilteredItems(
+    artifactsQuery.data?.filter((artifact) => artifact.kind === "document") ?? [],
+    query,
+  );
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -102,7 +115,11 @@ export function WorkspaceSidebar({
         <SidebarGroup>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton isActive tooltip="Home">
+              <SidebarMenuButton
+                isActive={activeArtifactPath === null}
+                onClick={onOpenHome}
+                tooltip="Home"
+              >
                 <Home />
                 <span>Home</span>
               </SidebarMenuButton>
@@ -115,6 +132,10 @@ export function WorkspaceSidebar({
           items={filteredPages}
           label="Pages"
           onAdd={onCreatePage}
+          onOpen={onOpenArtifact}
+          activePath={activeArtifactPath}
+          loading={artifactsQuery.isPending}
+          searchQuery={query}
         />
         <ContentSection
           addLabel="Create document"
@@ -122,6 +143,10 @@ export function WorkspaceSidebar({
           items={filteredDocuments}
           label="Documents"
           onAdd={onCreateDocument}
+          onOpen={onOpenArtifact}
+          activePath={activeArtifactPath}
+          loading={artifactsQuery.isPending}
+          searchQuery={query}
         />
       </SidebarContent>
 
@@ -143,9 +168,13 @@ export function WorkspaceSidebar({
 type ContentSectionProps = {
   addLabel: string;
   document?: boolean;
-  items: string[];
+  items: ArtifactSummary[];
   label: string;
   onAdd: () => void;
+  onOpen: (path: string) => void;
+  activePath: string | null;
+  loading: boolean;
+  searchQuery: string;
 };
 
 function ContentSection({
@@ -154,6 +183,10 @@ function ContentSection({
   items,
   label,
   onAdd,
+  onOpen,
+  activePath,
+  loading,
+  searchQuery,
 }: ContentSectionProps) {
   const ItemIcon = document ? FileText : File;
 
@@ -171,15 +204,26 @@ function ContentSection({
           <SidebarGroupContent>
             <SidebarMenu>
               {items.map((item) => (
-                <SidebarMenuItem key={item}>
-                  <SidebarMenuButton className="pl-7" size="sm">
+                <SidebarMenuItem key={item.path}>
+                  <SidebarMenuButton
+                    className="pl-7"
+                    isActive={activePath === item.path}
+                    onClick={() => onOpen(item.path)}
+                    size="sm"
+                    tooltip={item.path}
+                  >
                     <ItemIcon />
-                    <span>{item}</span>
+                    <span>{item.title}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
-              {items.length === 0 && (
-                <li className="px-7 py-2 text-xs text-muted-foreground">No matches</li>
+              {!loading && items.length === 0 && (
+                <li className="px-7 py-2 text-xs text-muted-foreground">
+                  {searchQuery ? "No matches" : `No ${label.toLowerCase()} yet`}
+                </li>
+              )}
+              {loading && (
+                <li className="px-7 py-2 text-xs text-muted-foreground">Loading…</li>
               )}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -189,10 +233,12 @@ function ContentSection({
   );
 }
 
-function useFilteredItems(items: string[], query: string) {
+function useFilteredItems(items: ArtifactSummary[], query: string) {
   return useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     if (!normalizedQuery) return items;
-    return items.filter((item) => item.toLocaleLowerCase().includes(normalizedQuery));
+    return items.filter((item) =>
+      `${item.title} ${item.path}`.toLocaleLowerCase().includes(normalizedQuery),
+    );
   }, [items, query]);
 }
