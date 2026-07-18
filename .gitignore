@@ -56,3 +56,10 @@ temp
 
 # Local dependency and repository source references
 opensrc/
+
+# Local Heydesk workspace state and test artifacts
+.heydesk/
+local.db*
+BrowserArtifact.md
+TestNote.md
+rome-essay-outline.md
