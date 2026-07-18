@@ -453,6 +453,28 @@ loop but blurred the product distinction between workspaces, pages, future Word
 documents, and conversation artifacts. Correcting the boundary before document
 editing avoids carrying that ambiguity into the next vertical slice.
 
+### ADR-020 — Keep Word documents as revisioned OOXML binaries
+
+**Decision:** Word documents are a first-class `documents` domain backed by
+portable `.docx` files. The server validates OOXML, computes revisions from the
+exact bytes, and performs atomic revision-checked writes. The browser never
+reads or writes workspace files directly.
+
+**Editor:** Heydesk uses the Apache-2.0 `@eigenpal/docx-editor-*` 1.9.0 family.
+The editor is a lazy browser chunk, preserves OOXML as the canonical format,
+and disables implicit Google Font loading so the desktop-ready path remains
+local-first.
+
+**Assistant:** Each document owns a durable Codex thread. Codex runs read-only
+and uses a restricted dynamic-tool namespace to inspect the live editor and
+propose native tracked changes. A tool mutation is reported successful only
+after the resulting DOCX revision is committed by the server. Accepting or
+rejecting tracked changes remains a human action.
+
+**Deferred:** Collaborative editing, Yjs, document rename/delete, arbitrary
+agent formatting, Word coauthoring, and a desktop shell are not part of this
+vertical slice.
+
 ## Challenges and what they taught us
 
 ### Protocol shape is part of the product
