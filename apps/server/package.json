@@ -7,13 +7,18 @@
     "check-types": "tsc -b",
     "compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server",
     "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.mjs"
+    "start": "node dist/index.mjs",
+    "test": "DATABASE_URL=file::memory: CORS_ORIGIN=http://localhost vitest run",
+    "test:assistant-e2e": "DATABASE_URL=file::memory: CORS_ORIGIN=http://localhost CODEX_MODEL=gpt-5.6-luna RUN_ASSISTANT_E2E=1 vitest run src/domains/assistant/tests/assistant.e2e.test.ts --testTimeout=120000"
   },
   "dependencies": {
+    "@ag-ui/core": "0.0.52",
     "@heydesk/db": "workspace:*",
     "@heydesk/env": "workspace:*",
     "@hono/node-server": "^2.0.8",
+    "@tanstack/ai": "0.41.0",
     "dotenv": "catalog:",
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.12.27",
     "zod": "catalog:"
   },
@@ -22,6 +27,7 @@
     "@types/node": "catalog:",
     "tsdown": "^0.22.3",
     "tsx": "^4.22.5",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "^4.1.10"
   }
 }

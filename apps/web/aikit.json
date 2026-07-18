@@ -1,0 +1,11 @@
+{
+  "framework": "tanstack-router",
+  "paths": {
+    "components": "src/components/ai",
+    "utils": "src/lib/utils.ts"
+  },
+  "imports": {
+    "components/ai": "@/components/ai",
+    "lib": "@/lib"
+  }
+}
