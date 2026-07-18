@@ -1,57 +1,107 @@
-import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
-import { basename, extname, relative, resolve, sep } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  lstat,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 
 import type { WorkspaceService } from "../workspace/workspace.service";
-import type { Artifact, ArtifactSummary } from "./artifact.types";
+import type { Page, PageSummary } from "./page.types";
 
 const supportedExtensions = new Set([".md", ".mdx"]);
-const maximumArtifactSize = 2 * 1024 * 1024;
+const maximumPageSize = 2 * 1024 * 1024;
 
-export class ArtifactNotFoundError extends Error {}
-export class InvalidArtifactPathError extends Error {}
+export class PageNotFoundError extends Error {}
+export class InvalidPagePathError extends Error {}
+export class PageRevisionConflictError extends Error {
+  constructor(readonly current: Page) {
+    super("This page changed on disk.");
+  }
+}
 
-export class ArtifactService {
+export class PageService {
   constructor(
     private readonly workspaces: Pick<WorkspaceService, "getById">,
   ) {}
 
-  async list(workspaceId: string): Promise<ArtifactSummary[]> {
+  async list(workspaceId: string): Promise<PageSummary[]> {
     const workspace = await this.workspaces.getById(workspaceId);
     const root = await realpath(workspace.path);
-    const paths = await discoverArtifacts(root);
-    const artifacts = await Promise.all(
+    const paths = await discoverPages(root);
+    const pages = await Promise.all(
       paths.map((path) => this.readSummary(root, path)),
     );
-    return artifacts.sort((left, right) =>
+    return pages.sort((left, right) =>
       left.path.localeCompare(right.path, undefined, { sensitivity: "base" }),
     );
   }
 
-  async read(workspaceId: string, requestedPath: string): Promise<Artifact> {
+  async read(workspaceId: string, requestedPath: string): Promise<Page> {
     const workspace = await this.workspaces.getById(workspaceId);
     const root = await realpath(workspace.path);
-    const artifactPath = await resolveArtifactPath(root, requestedPath);
-    const summary = await this.readSummary(root, artifactPath);
-    return { ...summary, content: await readFile(artifactPath, "utf8") };
+    const pagePath = await resolvePagePath(root, requestedPath);
+    const summary = await this.readSummary(root, pagePath);
+    const content = await readFile(pagePath, "utf8");
+    return createPage(summary, content);
+  }
+
+  async write(
+    workspaceId: string,
+    requestedPath: string,
+    content: string,
+    expectedRevision: string,
+  ): Promise<Page> {
+    if (Buffer.byteLength(content, "utf8") > maximumPageSize) {
+      throw new InvalidPagePathError("That page is too large.");
+    }
+    const workspace = await this.workspaces.getById(workspaceId);
+    const root = await realpath(workspace.path);
+    const pagePath = await resolvePagePath(root, requestedPath);
+    const current = await this.read(workspaceId, requestedPath);
+    if (current.revision !== expectedRevision) {
+      throw new PageRevisionConflictError(current);
+    }
+
+    const details = await stat(pagePath);
+    const temporaryPath = resolve(
+      dirname(pagePath),
+      `.${basename(pagePath)}.heydesk-${randomUUID()}.tmp`,
+    );
+    try {
+      await writeFile(temporaryPath, content, {
+        encoding: "utf8",
+        flag: "wx",
+        mode: details.mode,
+      });
+      await rename(temporaryPath, pagePath);
+    } finally {
+      await rm(temporaryPath, { force: true }).catch(() => undefined);
+    }
+    return this.read(workspaceId, requestedPath);
   }
 
   private async readSummary(
     root: string,
-    artifactPath: string,
-  ): Promise<ArtifactSummary> {
-    const details = await stat(artifactPath);
-    if (!details.isFile() || details.size > maximumArtifactSize) {
-      throw new ArtifactNotFoundError("That artifact is not available.");
+    pagePath: string,
+  ): Promise<PageSummary> {
+    const details = await stat(pagePath);
+    if (!details.isFile() || details.size > maximumPageSize) {
+      throw new PageNotFoundError("That page is not available.");
     }
-    const content = await readFile(artifactPath, "utf8");
-    const path = relative(root, artifactPath).split(sep).join("/");
+    const content = await readFile(pagePath, "utf8");
+    const path = relative(root, pagePath).split(sep).join("/");
     const extension = extname(path).toLowerCase();
     const name = basename(path, extension);
     return {
       path,
       name,
       title: extractTitle(content) ?? name,
-      kind: "page",
       excerpt: extractExcerpt(content),
       updatedAt: details.mtime.toISOString(),
       size: details.size,
@@ -59,7 +109,38 @@ export class ArtifactService {
   }
 }
 
-async function discoverArtifacts(root: string): Promise<string[]> {
+function createPage(summary: PageSummary, content: string): Page {
+  const syntax = extname(summary.path).toLowerCase() === ".mdx" ? "mdx" : "markdown";
+  return {
+    ...summary,
+    content,
+    revision: revisionFor(content),
+    syntax,
+    editorMode:
+      syntax === "mdx" || hasUnsupportedRichMarkdown(content)
+        ? "source"
+        : "rich",
+  };
+}
+
+function revisionFor(content: string): string {
+  return createHash("sha256").update(content, "utf8").digest("hex");
+}
+
+function hasUnsupportedRichMarkdown(content: string): boolean {
+  return (
+    /^---\s*\n/u.test(content) ||
+    /<!--[\s\S]*?-->/u.test(content) ||
+    /<\/?[A-Za-z][^>]*>/u.test(content) ||
+    /^\s*\{[^\n]*\}\s*$/m.test(content) ||
+    /^\s*[-*]\s+\[[ xX]\]\s+/m.test(content) ||
+    /^\s*\[[^\]]+\]:\s+/m.test(content) ||
+    /!\[[^\]]*\]\([^)]*\)/u.test(content) ||
+    /^\s*\|?.+\|.+\|?\s*\n\s*\|?\s*:?-{3,}/m.test(content)
+  );
+}
+
+async function discoverPages(root: string): Promise<string[]> {
   const discovered: string[] = [];
   const ignoredPaths = await readWorkspaceIgnorePaths(root);
 
@@ -77,7 +158,7 @@ async function discoverArtifacts(root: string): Promise<string[]> {
         supportedExtensions.has(extname(entry.name).toLowerCase())
       ) {
         const details = await stat(path);
-        if (details.size <= maximumArtifactSize) discovered.push(path);
+        if (details.size <= maximumPageSize) discovered.push(path);
       }
     }
   }
@@ -112,7 +193,7 @@ function isIgnoredWorkspacePath(path: string, ignored: Set<string>): boolean {
   return false;
 }
 
-async function resolveArtifactPath(
+async function resolvePagePath(
   root: string,
   requestedPath: string,
 ): Promise<string> {
@@ -126,7 +207,7 @@ async function resolveArtifactPath(
     ) ||
     !supportedExtensions.has(extname(normalized).toLowerCase())
   ) {
-    throw new InvalidArtifactPathError("That artifact path is not allowed.");
+    throw new InvalidPagePathError("That page path is not allowed.");
   }
 
   let current = root;
@@ -135,17 +216,17 @@ async function resolveArtifactPath(
       current = resolve(current, segment);
       const details = await lstat(current);
       if (details.isSymbolicLink()) {
-        throw new InvalidArtifactPathError("Linked artifacts are not allowed.");
+        throw new InvalidPagePathError("Linked pages are not allowed.");
       }
     }
     const canonical = await realpath(current);
     if (!isInside(root, canonical)) {
-      throw new InvalidArtifactPathError("That artifact is outside this workspace.");
+      throw new InvalidPagePathError("That page is outside this workspace.");
     }
     return canonical;
   } catch (error) {
-    if (error instanceof InvalidArtifactPathError) throw error;
-    throw new ArtifactNotFoundError("That artifact is not available.");
+    if (error instanceof InvalidPagePathError) throw error;
+    throw new PageNotFoundError("That page is not available.");
   }
 }
 

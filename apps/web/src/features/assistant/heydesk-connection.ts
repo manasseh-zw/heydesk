@@ -5,11 +5,19 @@ import type {
 } from "@tanstack/ai-client";
 
 import { assistantApiUrl, request } from "./assistant.service";
+import type {
+  AssistantRunContext,
+  AssistantRunPreferences,
+} from "./assistant.types";
 
 export type HeydeskConnection = SubscribeConnectionAdapter;
 
 export function createHeydeskConnection(
   workspaceId: string,
+  getRunOptions: () => {
+    context?: AssistantRunContext;
+    preferences?: AssistantRunPreferences;
+  } = () => ({}),
 ): HeydeskConnection {
   let activeRunId: string | null = null;
 
@@ -30,11 +38,12 @@ export function createHeydeskConnection(
       };
       abortSignal?.addEventListener("abort", interrupt, { once: true });
       try {
+        const options = getRunOptions();
         await request(
           `/api/workspaces/${encodeURIComponent(workspaceId)}/assistant/runs`,
           {
             method: "POST",
-            body: JSON.stringify({ runId, message }),
+            body: JSON.stringify({ runId, message, ...options }),
             signal: abortSignal,
           },
         );

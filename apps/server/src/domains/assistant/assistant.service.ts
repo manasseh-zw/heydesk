@@ -3,6 +3,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import { env } from "@heydesk/env/server";
 
+import { PageService } from "../page/page.service";
 import { workspaceService } from "../workspace/workspace.service";
 import type { WorkspaceService } from "../workspace/workspace.service";
 import type { WorkspaceSummary } from "../workspace/workspace.types";
@@ -21,6 +22,7 @@ import {
 import {
   CodexMissingError,
   CodexRpcError,
+  type CodexModel,
   type CodexNotification,
   type CodexServerRequestResponder,
 } from "../../infrastructure/codex/codex.types";
@@ -31,13 +33,17 @@ import type {
   AssistantEvent,
   AssistantFileChange,
   AssistantInteraction,
+  AssistantModel,
   AssistantReadiness,
   AssistantRun,
+  AssistantRunContext,
+  AssistantRunPreferences,
   AssistantSnapshot,
   SequencedAssistantEvent,
 } from "./assistant.types";
 
 const INTERACTION_TIMEOUT_MS = 5 * 60_000;
+const MODEL_CACHE_MS = 30_000;
 
 type AssistantEventListener = (event: SequencedAssistantEvent) => void;
 
@@ -69,6 +75,8 @@ export class AssistantService {
   private readonly activeByRun = new Map<string, ActiveRun>();
   private readonly listeners = new Map<string, Set<AssistantEventListener>>();
   private readonly pendingInteractions = new Map<string, PendingInteraction>();
+  private modelCache: { expiresAt: number; models: CodexModel[] } | null = null;
+  private readonly pages: PageService;
 
   constructor(
     private readonly codex: CodexAppServer,
@@ -78,6 +86,7 @@ export class AssistantService {
     > = workspaceService,
     private readonly options: AssistantServiceOptions = {},
   ) {
+    this.pages = new PageService(workspaces);
     codex.on("notification", (notification) => {
       void this.handleNotification(notification).catch((error) => {
         console.error(
@@ -118,19 +127,7 @@ export class AssistantService {
         };
       }
 
-      const models = [];
-      let cursor: string | undefined;
-      do {
-        const page = modelListResponseSchema.parse(
-          await this.codex.request("model/list", {
-            ...(cursor ? { cursor } : {}),
-            limit: 100,
-            includeHidden: false,
-          }),
-        );
-        models.push(...page.data);
-        cursor = page.nextCursor ?? undefined;
-      } while (cursor);
+      const models = await this.loadModels();
 
       const model = models.find(
         (candidate) =>
@@ -158,6 +155,25 @@ export class AssistantService {
       }
       return { status: "error", recoverable: true, message: toMessage(error) };
     }
+  }
+
+  async getModels(): Promise<AssistantModel[]> {
+    return (await this.loadModels()).map((model) => ({
+      id: model.id,
+      model: model.model,
+      displayName: model.displayName,
+      supportedReasoningEfforts: model.supportedReasoningEfforts.map(
+        (option) => ({
+          effort: option.reasoningEffort,
+          description: option.description,
+        }),
+      ),
+      defaultReasoningEffort: model.defaultReasoningEffort,
+      serviceTiers: model.serviceTiers,
+      ...(model.defaultServiceTier
+        ? { defaultServiceTier: model.defaultServiceTier }
+        : {}),
+    }));
   }
 
   async startLogin(): Promise<{ loginId: string; authUrl: string }> {
@@ -201,6 +217,10 @@ export class AssistantService {
     workspaceId: string,
     runId: string,
     userText: string,
+    options: {
+      context?: AssistantRunContext;
+      preferences?: AssistantRunPreferences;
+    } = {},
   ): Promise<AssistantRun> {
     const readiness = await this.getReadiness();
     if (readiness.status !== "ready")
@@ -208,6 +228,18 @@ export class AssistantService {
 
     const { workspace, repository } =
       await this.getWorkspaceContext(workspaceId);
+    if (options.context) {
+      const page = await this.pages.read(
+        workspaceId,
+        options.context.path,
+      );
+      if (page.revision !== options.context.expectedRevision) {
+        throw new AssistantConflictError(
+          "That page changed before the assistant run started.",
+        );
+      }
+    }
+    const preferences = await this.resolvePreferences(options.preferences);
     if (this.activeByRun.has(runId) || (await repository.getRun(runId))) {
       throw new AssistantConflictError("That assistant run already exists.");
     }
@@ -219,6 +251,8 @@ export class AssistantService {
       threadId,
       status: "starting",
       userText,
+      ...(options.context ? { context: options.context } : {}),
+      preferences,
       createdAt: new Date().toISOString(),
     };
     await repository.createRun(run);
@@ -239,7 +273,13 @@ export class AssistantService {
       const response = turnResponseSchema.parse(
         await this.codex.request("turn/start", {
           threadId,
-          input: [{ type: "text", text: userText, text_elements: [] }],
+          input: [
+            {
+              type: "text",
+              text: buildCodexInput(userText, options.context),
+              text_elements: [],
+            },
+          ],
           cwd: workspace.path,
           approvalPolicy: "untrusted",
           sandboxPolicy: {
@@ -249,7 +289,11 @@ export class AssistantService {
             excludeTmpdirEnvVar: true,
             excludeSlashTmp: true,
           },
-          model: env.CODEX_MODEL,
+          model: preferences.model,
+          effort: preferences.effort,
+          ...(preferences.serviceTier
+            ? { serviceTier: preferences.serviceTier }
+            : {}),
         }),
       );
       run.turnId = response.turn.id;
@@ -265,6 +309,70 @@ export class AssistantService {
       await this.failRun(active, "TURN_START_FAILED", toMessage(error), true);
       throw error;
     }
+  }
+
+  private async loadModels(): Promise<CodexModel[]> {
+    if (this.modelCache && this.modelCache.expiresAt > Date.now()) {
+      return this.modelCache.models;
+    }
+    const models: CodexModel[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = modelListResponseSchema.parse(
+        await this.codex.request("model/list", {
+          ...(cursor ? { cursor } : {}),
+          limit: 100,
+          includeHidden: false,
+        }),
+      );
+      models.push(...page.data);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    this.modelCache = { expiresAt: Date.now() + MODEL_CACHE_MS, models };
+    return models;
+  }
+
+  private async resolvePreferences(
+    requested?: AssistantRunPreferences,
+  ): Promise<AssistantRunPreferences> {
+    const models = await this.loadModels();
+    const requestedModel = requested?.model ?? env.CODEX_MODEL;
+    const model = models.find(
+      (candidate) =>
+        !candidate.hidden &&
+        (candidate.id === requestedModel || candidate.model === requestedModel),
+    );
+    if (!model) {
+      throw new AssistantConflictError(
+        `${requestedModel} is not available in this Codex installation.`,
+      );
+    }
+    const effort = requested?.effort ?? model.defaultReasoningEffort;
+    if (
+      model.supportedReasoningEfforts.length > 0 &&
+      !model.supportedReasoningEfforts.some(
+        (option) => option.reasoningEffort === effort,
+      )
+    ) {
+      throw new AssistantConflictError(
+        `${effort} reasoning is not available for ${model.displayName}.`,
+      );
+    }
+    if (
+      requested?.serviceTier &&
+      !model.serviceTiers.some((tier) => tier.id === requested.serviceTier)
+    ) {
+      throw new AssistantConflictError(
+        `${requested.serviceTier} service is not available for ${model.displayName}.`,
+      );
+    }
+    return {
+      model: model.model,
+      effort,
+      ...(requested?.serviceTier
+        ? { serviceTier: requested.serviceTier }
+        : {}),
+    };
   }
 
   async interruptRun(workspaceId: string, runId: string): Promise<void> {
@@ -559,7 +667,10 @@ export class AssistantService {
       const itemId = stringValue(params.itemId);
       const item = itemId ? active.items.get(itemId) : undefined;
       const changes = mapFileChanges(item?.changes);
-      if (await canAutoAcceptFileChanges(active.workspace.path, changes)) {
+      if (
+        changesMatchRunScope(active, changes) &&
+        (await canAutoAcceptFileChanges(active.workspace.path, changes))
+      ) {
         responder.resolve({ decision: "accept" });
         return;
       }
@@ -893,6 +1004,35 @@ function workspaceRelativePath(
     return undefined;
   }
   return path.split(sep).join("/");
+}
+
+function changesMatchRunScope(
+  active: ActiveRun,
+  changes: AssistantFileChange[],
+): boolean {
+  if (active.run.context?.kind !== "page") return true;
+  if (changes.length === 0) return false;
+  return changes.every(
+    (change) =>
+      workspaceRelativePath(active.workspace.path, change.path) ===
+      active.run.context?.path,
+  );
+}
+
+function buildCodexInput(
+  userText: string,
+  context?: AssistantRunContext,
+): string {
+  if (!context) return userText;
+  return [
+    "[Heydesk page context]",
+    `The user is currently viewing ${context.path}.`,
+    `The page revision before this turn is ${context.expectedRevision}.`,
+    "Focus changes on this page. Explain conversational answers normally.",
+    "[/Heydesk page context]",
+    "",
+    userText,
+  ].join("\n");
 }
 
 function mapPlanStatus(

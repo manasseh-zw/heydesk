@@ -10,16 +10,15 @@ import {
   DocumentTitle,
 } from "@/components/ai/document";
 import { Markdown } from "@/components/ai/markdown";
-import type { Artifact } from "../artifact.types";
+import type { Page } from "@/features/page/page.types";
 
 type ArtifactPreviewProps = {
-  artifact: Artifact;
-  onOpen: (path: string) => void;
+  page: Page;
+  onOpenPage: (path: string) => void;
 };
 
-export function ArtifactPreview({ artifact, onOpen }: ArtifactPreviewProps) {
-  const filename = artifact.path.split("/").at(-1) ?? artifact.path;
-  const openLabel = artifact.kind === "page" ? "Open page" : "Open document";
+export function ArtifactPreview({ page, onOpenPage }: ArtifactPreviewProps) {
+  const filename = page.path.split("/").at(-1) ?? page.path;
 
   return (
     <div className="relative">
@@ -33,7 +32,7 @@ export function ArtifactPreview({ artifact, onOpen }: ArtifactPreviewProps) {
             <Button
               aria-label={`Download ${filename}`}
               className="text-muted-foreground hover:text-foreground"
-              onClick={() => downloadArtifact(artifact.content, filename)}
+              onClick={() => downloadArtifact(page.content, filename)}
               size="icon-sm"
               variant="ghost"
             >
@@ -43,17 +42,17 @@ export function ArtifactPreview({ artifact, onOpen }: ArtifactPreviewProps) {
         </DocumentHeader>
         <DocumentContent>
           <div className="px-1 pb-12 pt-2">
-            <Markdown>{artifact.content}</Markdown>
+            <Markdown>{page.content}</Markdown>
           </div>
         </DocumentContent>
       </Document>
 
       <Button
         className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-white/15 bg-foreground/90 px-4 text-xs text-background shadow-sm backdrop-blur-xl hover:bg-foreground"
-        onClick={() => onOpen(artifact.path)}
+        onClick={() => onOpenPage(page.path)}
         size="sm"
       >
-        {openLabel}
+        Open page
         <ArrowUpRightIcon />
       </Button>
     </div>

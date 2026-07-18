@@ -37,6 +37,24 @@ describe("Codex app-server transport", () => {
       CodexProcessError,
     );
   });
+
+  it("routes notifications to only the matching thread collector", async () => {
+    const client = new CodexAppServer(await createFakeCodex());
+    clients.push(client);
+    const first: string[] = [];
+    const second: string[] = [];
+    const unsubscribeFirst = client.subscribeToThread("thread-1", (event) =>
+      first.push(event.method),
+    );
+    client.subscribeToThread("thread-2", (event) => second.push(event.method));
+
+    await client.request("thread-notifications");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(first).toEqual(["turn/started"]);
+    expect(second).toEqual(["turn/completed"]);
+    unsubscribeFirst();
+  });
 });
 
 async function createFakeCodex(): Promise<string> {
@@ -61,6 +79,12 @@ input.on("line", (line) => {
   if (message.method === "overload" && !overloaded) {
     overloaded = true;
     send({ id: message.id, error: { code: -32001, message: "overloaded" } });
+    return;
+  }
+  if (message.method === "thread-notifications") {
+    send({ method: "turn/started", params: { threadId: "thread-1" } });
+    send({ method: "turn/completed", params: { thread: { id: "thread-2" } } });
+    send({ id: message.id, result: { ok: true } });
     return;
   }
   send({ id: message.id, result: message.method === "echo" ? message.params : { ok: true } });

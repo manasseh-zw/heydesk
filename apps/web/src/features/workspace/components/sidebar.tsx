@@ -32,40 +32,34 @@ import {
 } from "@heydesk/ui/components/sidebar";
 
 import { LogoMark } from "@/components/logo";
-import { artifactsQueryOptions } from "@/features/artifact/artifact.queries";
-import type { ArtifactSummary } from "@/features/artifact/artifact.types";
+import { pagesQueryOptions } from "@/features/page/page.queries";
+import type { PageSummary } from "@/features/page/page.types";
 import type { WorkspaceSummary } from "../workspace.types";
 
 type WorkspaceSidebarProps = {
   workspace: WorkspaceSummary;
   onCreateDocument: () => void;
   onCreatePage: () => void;
-  onOpenArtifact: (path: string) => void;
+  onOpenPage: (path: string) => void;
   onOpenHome: () => void;
   onSwitchWorkspace: () => void;
-  activeArtifactPath: string | null;
+  activePagePath: string | null;
 };
 
 export function WorkspaceSidebar({
   workspace,
   onCreateDocument,
   onCreatePage,
-  onOpenArtifact,
+  onOpenPage,
   onOpenHome,
   onSwitchWorkspace,
-  activeArtifactPath,
+  activePagePath,
 }: WorkspaceSidebarProps) {
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
-  const artifactsQuery = useQuery(artifactsQueryOptions(workspace.id));
-  const filteredPages = useFilteredItems(
-    artifactsQuery.data?.filter((artifact) => artifact.kind === "page") ?? [],
-    query,
-  );
-  const filteredDocuments = useFilteredItems(
-    artifactsQuery.data?.filter((artifact) => artifact.kind === "document") ?? [],
-    query,
-  );
+  const pagesQuery = useQuery(pagesQueryOptions(workspace.id));
+  const filteredPages = useFilteredItems(pagesQuery.data ?? [], query);
+  const filteredDocuments: NavigationItem[] = [];
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -116,7 +110,7 @@ export function WorkspaceSidebar({
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
-                isActive={activeArtifactPath === null}
+                isActive={activePagePath === null}
                 onClick={onOpenHome}
                 tooltip="Home"
               >
@@ -132,9 +126,9 @@ export function WorkspaceSidebar({
           items={filteredPages}
           label="Pages"
           onAdd={onCreatePage}
-          onOpen={onOpenArtifact}
-          activePath={activeArtifactPath}
-          loading={artifactsQuery.isPending}
+          onOpen={onOpenPage}
+          activePath={activePagePath}
+          loading={pagesQuery.isPending}
           searchQuery={query}
         />
         <ContentSection
@@ -143,9 +137,9 @@ export function WorkspaceSidebar({
           items={filteredDocuments}
           label="Documents"
           onAdd={onCreateDocument}
-          onOpen={onOpenArtifact}
-          activePath={activeArtifactPath}
-          loading={artifactsQuery.isPending}
+          onOpen={() => undefined}
+          activePath={null}
+          loading={false}
           searchQuery={query}
         />
       </SidebarContent>
@@ -168,7 +162,7 @@ export function WorkspaceSidebar({
 type ContentSectionProps = {
   addLabel: string;
   document?: boolean;
-  items: ArtifactSummary[];
+  items: NavigationItem[];
   label: string;
   onAdd: () => void;
   onOpen: (path: string) => void;
@@ -233,7 +227,9 @@ function ContentSection({
   );
 }
 
-function useFilteredItems(items: ArtifactSummary[], query: string) {
+type NavigationItem = Pick<PageSummary, "path" | "title">;
+
+function useFilteredItems(items: NavigationItem[], query: string) {
   return useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     if (!normalizedQuery) return items;

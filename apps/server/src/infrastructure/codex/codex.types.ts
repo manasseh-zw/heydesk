@@ -29,6 +29,13 @@ export type CodexModel = {
   model: string;
   displayName: string;
   hidden: boolean;
+  supportedReasoningEfforts: Array<{
+    reasoningEffort: string;
+    description: string;
+  }>;
+  defaultReasoningEffort: string;
+  serviceTiers: Array<{ id: string; name: string; description: string }>;
+  defaultServiceTier?: string | null;
 };
 
 export type CodexThread = { id: string };

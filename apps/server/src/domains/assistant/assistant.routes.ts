@@ -27,6 +27,14 @@ export function createAssistantRoutes(service: AssistantService): Hono {
     c.json(await service.getReadiness()),
   );
 
+  assistantRoutes.get("/assistant/models", async (c) => {
+    try {
+      return c.json(await service.getModels());
+    } catch (error) {
+      return mapAssistantError(c, error);
+    }
+  });
+
   assistantRoutes.post("/assistant/auth/login", async (c) =>
     c.json(await service.startLogin(), 201),
   );
@@ -148,6 +156,12 @@ export function createAssistantRoutes(service: AssistantService): Hono {
           c.req.param("workspaceId"),
           input.data.runId,
           input.data.message,
+          {
+            ...(input.data.context ? { context: input.data.context } : {}),
+            ...(input.data.preferences
+              ? { preferences: input.data.preferences }
+              : {}),
+          },
         ),
         201,
       );

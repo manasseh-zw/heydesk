@@ -21,8 +21,35 @@ export type AssistantRun = {
   turnId?: string;
   status: AssistantRunStatus;
   userText: string;
+  context?: AssistantRunContext;
+  preferences?: AssistantRunPreferences;
   createdAt: string;
   completedAt?: string;
+};
+
+export type AssistantRunContext = {
+  kind: "page";
+  path: string;
+  expectedRevision: string;
+};
+
+export type AssistantRunPreferences = {
+  model: string;
+  effort: string;
+  serviceTier?: string;
+};
+
+export type AssistantModel = {
+  id: string;
+  model: string;
+  displayName: string;
+  supportedReasoningEfforts: Array<{
+    effort: string;
+    description: string;
+  }>;
+  defaultReasoningEffort: string;
+  serviceTiers: Array<{ id: string; name: string; description: string }>;
+  defaultServiceTier?: string;
 };
 
 export type AssistantPlanStep = {

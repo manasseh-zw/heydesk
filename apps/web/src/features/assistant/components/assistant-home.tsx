@@ -1,6 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef } from "react";
-import { useChat } from "@tanstack/ai-react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Fragment } from "react";
 import {
   AlertTriangleIcon,
   CheckCircle2Icon,
@@ -28,148 +26,53 @@ import {
   Reasoning,
   ReasoningTrigger,
 } from "@/components/ai/reasoning";
-import { artifactKeys } from "@/features/artifact/artifact.queries";
 import { HomeComposer } from "@/features/workspace/components/home-composer";
 import type { WorkspaceSummary } from "@/features/workspace/workspace.types";
-import { assistantKeys } from "../assistant.queries";
 import {
   getAssistantReadiness,
-  getAssistantSnapshot,
-  respondToAssistantInteraction,
   startAssistantLogin,
 } from "../assistant.service";
-import type {
-  AssistantClientState,
-  AssistantInteraction,
-  AssistantRun,
-} from "../assistant.types";
-import { createHeydeskConnection } from "../heydesk-connection";
+import { useAssistantSession } from "../assistant-session";
 import { AssistantInteractionCard } from "./assistant-interaction";
 import { CommittedArtifactPreview } from "./committed-artifact-preview";
 import { RenderAssistantMessage } from "./render-assistant-message";
 
 type AssistantHomeProps = {
   workspace: WorkspaceSummary;
-  onOpenArtifact: (path: string) => void;
-};
-
-const emptyState: AssistantClientState = {
-  activeRun: null,
-  interactions: [],
-  plan: [],
-  fileDiffs: [],
-  artifacts: [],
+  onOpenPage: (path: string) => void;
+  onSend?: (message: string) => Promise<void>;
+  compactSurface?: boolean;
+  disabled?: boolean;
 };
 
 export function AssistantHome({
   workspace,
-  onOpenArtifact,
+  onOpenPage,
+  onSend,
+  compactSurface = false,
+  disabled = false,
 }: AssistantHomeProps) {
-  const queryClient = useQueryClient();
-  const connection = useMemo(
-    () => createHeydeskConnection(workspace.id),
-    [workspace.id],
-  );
-  const restoredRef = useRef(false);
-  const latestMessageIdRef = useRef<string | undefined>(undefined);
-  const snapshotQuery = useQuery({
-    queryKey: assistantKeys.workspace(workspace.id),
-    queryFn: () => getAssistantSnapshot(workspace.id),
-  });
-  const readinessQuery = useQuery({
-    queryKey: assistantKeys.readiness(),
-    queryFn: getAssistantReadiness,
-    refetchInterval: (query) =>
-      query.state.data?.status === "ready" ? false : 3_000,
-  });
-  const clientStateQuery = useQuery({
-    queryKey: assistantKeys.state(workspace.id),
-    queryFn: async () => emptyState,
-    initialData: emptyState,
-    staleTime: Number.POSITIVE_INFINITY,
-  });
-
-  const updateState = (
-    updater: (state: AssistantClientState) => AssistantClientState,
-  ) => {
-    queryClient.setQueryData<AssistantClientState>(
-      assistantKeys.state(workspace.id),
-      (current) => updater(current ?? emptyState),
-    );
-  };
-
-  const chat = useChat({
-    connection,
-    id: `heydesk:${workspace.id}`,
-    threadId: workspace.id,
-    live: true,
-    initialMessages: [],
-    onCustomEvent(name, value) {
-      updateState((state) =>
-        reduceCustomEvent(
-          state,
-          name,
-          value,
-          latestMessageIdRef.current,
-        ),
-      );
-      if (name === "heydesk:artifact-committed") {
-        void queryClient.invalidateQueries({
-          queryKey: artifactKeys.all(workspace.id),
-        });
-      }
-    },
-  });
-  latestMessageIdRef.current = chat.messages.at(-1)?.id;
-
-  useEffect(() => {
-    const snapshot = snapshotQuery.data;
-    if (!snapshot || restoredRef.current) return;
-    restoredRef.current = true;
-    if (chat.messages.length === 0 && snapshot.messages.length > 0) {
-      chat.setMessages(snapshot.messages);
-    }
-    updateState((state) => restoreClientState(state, snapshot));
-  }, [chat, snapshotQuery.data]);
-
-  const state = clientStateQuery.data;
-  const isRunning =
-    chat.sessionGenerating || chat.isLoading || !!state.activeRun;
-  const hasMessages = chat.messages.length > 0;
-  const readiness = readinessQuery.data;
-  const canSend = readiness?.status === "ready";
-  const waitingForFirstAssistantPart =
-    isRunning && chat.messages.at(-1)?.role === "user";
-
-  const respond = async (
-    interaction: AssistantInteraction,
-    response: { approved?: boolean; answers?: Record<string, string[]> },
-  ) => {
-    try {
-      await respondToAssistantInteraction(workspace.id, interaction, response);
-    } catch (error) {
-      updateState((current) => ({
-        ...current,
-        error: {
-          code: "INTERACTION_FAILED",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Heydesk could not send that response.",
-        },
-      }));
-    }
-  };
+  const session = useAssistantSession();
+  const state = session.state;
+  const isRunning = session.isRunning;
+  const hasMessages = session.messages.length > 0;
+  const readiness = session.readiness;
+  const canSend = readiness?.status === "ready" && !disabled;
+  const waitingForFirstAssistantPart = session.waitingForFirstAssistantPart;
+  const sendMessage = onSend ?? session.sendMessage;
 
   if (!hasMessages) {
     return (
-      <div className="flex size-full items-center justify-center p-8">
+      <div
+        className={`flex size-full items-center justify-center ${compactSurface ? "p-4" : "p-8"}`}
+      >
         <div className="flex w-full flex-col items-center">
           <HomeComposer
+            compact={compactSurface}
             disabled={!canSend}
             isRunning={isRunning}
-            onStop={chat.stop}
-            onSubmit={chat.sendMessage}
+            onStop={session.stop}
+            onSubmit={sendMessage}
           />
           <ReadinessNotice readiness={readiness} />
         </div>
@@ -180,9 +83,9 @@ export function AssistantHome({
   return (
     <div className="flex size-full min-h-0 flex-col">
       <Conversation className="min-h-0 flex-1">
-        <ConversationContent className="px-6 py-8">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-            {chat.messages.map((message, messageIndex) => (
+        <ConversationContent className={compactSurface ? "px-4 py-5" : "px-6 py-8"}>
+          <div className={`mx-auto flex w-full flex-col ${compactSurface ? "gap-4" : "max-w-3xl gap-6"}`}>
+            {session.messages.map((message, messageIndex) => (
               <Fragment key={message.id}>
                 <Message
                   type={message.role === "user" ? "outgoing" : "incoming"}
@@ -192,7 +95,7 @@ export function AssistantHome({
                       isStreaming={
                         isRunning &&
                         message.role === "assistant" &&
-                        messageIndex === chat.messages.length - 1
+                        messageIndex === session.messages.length - 1
                       }
                       outgoing={message.role === "user"}
                       parts={message.parts}
@@ -204,7 +107,7 @@ export function AssistantHome({
                   .map((artifact) => (
                     <CommittedArtifactPreview
                       key={artifact.id}
-                      onOpen={onOpenArtifact}
+                      onOpenPage={onOpenPage}
                       path={artifact.path}
                       workspaceId={workspace.id}
                     />
@@ -247,7 +150,9 @@ export function AssistantHome({
               <AssistantInteractionCard
                 interaction={interaction}
                 key={interaction.id}
-                onRespond={(response) => void respond(interaction, response)}
+                onRespond={(response) =>
+                  void session.respond(interaction, response)
+                }
               />
             ))}
 
@@ -255,25 +160,25 @@ export function AssistantHome({
               .filter(
                 (artifact) =>
                   !artifact.afterMessageId ||
-                  !chat.messages.some(
+                  !session.messages.some(
                     (message) => message.id === artifact.afterMessageId,
                   ),
               )
               .map((artifact) => (
                 <CommittedArtifactPreview
                   key={artifact.id}
-                  onOpen={onOpenArtifact}
+                  onOpenPage={onOpenPage}
                   path={artifact.path}
                   workspaceId={workspace.id}
                 />
               ))}
 
-            {(chat.error || state.error) && (
+            {(session.error || state.error) && (
               <Exception>
                 <ExceptionHeader>
                   <ExceptionType>AssistantError</ExceptionType>
                   <ExceptionMessage>
-                    {chat.error?.message ?? state.error?.message}
+                    {session.error?.message ?? state.error?.message}
                   </ExceptionMessage>
                 </ExceptionHeader>
               </Exception>
@@ -283,14 +188,14 @@ export function AssistantHome({
         <ConversationScrollButton className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border bg-background p-2 shadow-sm data-[at-bottom=true]:hidden" />
       </Conversation>
 
-      <div className="shrink-0 bg-background/95 px-6 pb-6 pt-3 backdrop-blur">
+      <div className={`shrink-0 bg-background/95 pt-3 backdrop-blur ${compactSurface ? "px-3 pb-3" : "px-6 pb-6"}`}>
         <div className="mx-auto max-w-3xl">
           <HomeComposer
             compact
             disabled={!canSend}
             isRunning={isRunning}
-            onStop={chat.stop}
-            onSubmit={chat.sendMessage}
+            onStop={session.stop}
+            onSubmit={sendMessage}
           />
           <ReadinessNotice readiness={readiness} compact />
         </div>
@@ -326,114 +231,4 @@ function ReadinessNotice({
       )}
     </div>
   );
-}
-
-function reduceCustomEvent(
-  state: AssistantClientState,
-  name: string,
-  value: unknown,
-  latestMessageId?: string,
-): AssistantClientState {
-  if (name === "heydesk:readiness")
-    return { ...state, readiness: value as AssistantClientState["readiness"] };
-  if (name === "heydesk:plan")
-    return {
-      ...state,
-      plan: Array.isArray(value) ? (value as AssistantClientState["plan"]) : [],
-    };
-  if (name === "heydesk:file-diff")
-    return { ...state, fileDiffs: Array.isArray(value) ? value : [] };
-  if (name === "heydesk:artifact-committed")
-    return upsertArtifact(state, value, latestMessageId);
-  if (name === "heydesk:interaction-requested") {
-    const interaction = value as AssistantInteraction;
-    return {
-      ...state,
-      interactions: [
-        ...state.interactions.filter((item) => item.id !== interaction.id),
-        interaction,
-      ],
-    };
-  }
-  if (name === "heydesk:interaction-resolved") {
-    const id = recordString(value, "interactionId");
-    return {
-      ...state,
-      interactions: state.interactions.filter((item) => item.id !== id),
-    };
-  }
-  if (name === "heydesk:run-snapshot") {
-    const record = asRecord(value);
-    const run = (record.activeRun ??
-      ("workspaceId" in record && "userText" in record
-        ? record
-        : null)) as AssistantRun | null;
-    const status = recordString(record, "status");
-    if (
-      status === "completed" ||
-      status === "failed" ||
-      status === "interrupted"
-    )
-      return { ...state, activeRun: null };
-    return { ...state, activeRun: run ?? state.activeRun };
-  }
-  return state;
-}
-
-function restoreClientState(
-  state: AssistantClientState,
-  snapshot: Awaited<ReturnType<typeof getAssistantSnapshot>>,
-): AssistantClientState {
-  let restored = { ...state, activeRun: snapshot.activeRun };
-  for (const { event, runId } of snapshot.events) {
-    if (event.type === "artifact.committed") {
-      restored = upsertArtifact(
-        restored,
-        event.artifact,
-        `${runId}:assistant`,
-      );
-    }
-  }
-  return restored;
-}
-
-function upsertArtifact(
-  state: AssistantClientState,
-  value: unknown,
-  afterMessageId?: string,
-): AssistantClientState {
-  const artifact = asRecord(value);
-  if (
-    typeof artifact.id !== "string" ||
-    typeof artifact.runId !== "string" ||
-    typeof artifact.path !== "string" ||
-    artifact.path.startsWith("/") ||
-    artifact.path.split("/").some((segment) => segment === "..") ||
-    (artifact.kind !== "page" && artifact.kind !== "document")
-  ) {
-    return state;
-  }
-  const previous = state.artifacts.find((item) => item.id === artifact.id);
-  const next = {
-    ...(artifact as AssistantClientState["artifacts"][number]),
-    afterMessageId: afterMessageId ?? previous?.afterMessageId,
-  };
-  return {
-    ...state,
-    artifacts: [
-      ...state.artifacts.filter((item) => item.id !== next.id),
-      next,
-    ],
-  };
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function recordString(value: unknown, key: string): string | undefined {
-  const candidate = asRecord(value)[key];
-  return typeof candidate === "string" ? candidate : undefined;
 }

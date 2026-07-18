@@ -44,6 +44,25 @@ export const modelListResponseSchema = z.object({
         model: z.string(),
         displayName: z.string(),
         hidden: z.boolean().default(false),
+        supportedReasoningEfforts: z
+          .array(
+            z.object({
+              reasoningEffort: z.string(),
+              description: z.string().default(""),
+            }),
+          )
+          .default([]),
+        defaultReasoningEffort: z.string().default("medium"),
+        serviceTiers: z
+          .array(
+            z.object({
+              id: z.string(),
+              name: z.string(),
+              description: z.string().default(""),
+            }),
+          )
+          .default([]),
+        defaultServiceTier: z.string().nullable().optional(),
       })
       .passthrough(),
   ),

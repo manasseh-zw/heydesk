@@ -34,6 +34,10 @@ export class CodexAppServer extends EventEmitter<CodexEvents> {
   private buffer = Buffer.alloc(0);
   private requestSequence = 0;
   private readonly pending = new Map<JsonRpcId, PendingRequest>();
+  private readonly threadNotifications = new Map<
+    string,
+    Set<(notification: CodexNotification) => void>
+  >();
 
   constructor(private readonly explicitBinary?: string) {
     super();
@@ -51,6 +55,19 @@ export class CodexAppServer extends EventEmitter<CodexEvents> {
   async notify(method: string, params?: unknown): Promise<void> {
     await this.ensureStarted();
     this.write({ method, ...(params === undefined ? {} : { params }) });
+  }
+
+  subscribeToThread(
+    threadId: string,
+    listener: (notification: CodexNotification) => void,
+  ): () => void {
+    const listeners = this.threadNotifications.get(threadId) ?? new Set();
+    listeners.add(listener);
+    this.threadNotifications.set(threadId, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.threadNotifications.delete(threadId);
+    };
   }
 
   async stop(): Promise<void> {
@@ -231,10 +248,17 @@ export class CodexAppServer extends EventEmitter<CodexEvents> {
     }
 
     if (message.method) {
-      this.emit("notification", {
+      const notification = {
         method: message.method,
         params: message.params,
-      });
+      } satisfies CodexNotification;
+      this.emit("notification", notification);
+      const threadId = notificationThreadId(message.params);
+      if (threadId) {
+        for (const listener of this.threadNotifications.get(threadId) ?? []) {
+          listener(notification);
+        }
+      }
     }
   }
 
@@ -254,6 +278,7 @@ export class CodexAppServer extends EventEmitter<CodexEvents> {
       pending.reject(error);
     }
     this.pending.clear();
+    this.threadNotifications.clear();
     this.emit("exit", error);
   }
 }
@@ -262,4 +287,15 @@ export const codexAppServer = new CodexAppServer();
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function notificationThreadId(params: unknown): string | undefined {
+  if (!params || typeof params !== "object") return undefined;
+  const record = params as Record<string, unknown>;
+  if (typeof record.threadId === "string") return record.threadId;
+  if (record.thread && typeof record.thread === "object") {
+    const id = (record.thread as Record<string, unknown>).id;
+    if (typeof id === "string") return id;
+  }
+  return undefined;
 }

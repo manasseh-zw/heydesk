@@ -124,6 +124,56 @@ describe("Heydesk TanStack connection adapter", () => {
     expect(requests[1]?.url).toContain("/runs/run-1/interrupt");
   });
 
+  it("attaches the exact page context and turn preferences to the next send", async () => {
+    let requestBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      async (_input: string | URL | Request, init?: RequestInit) => {
+        requestBody = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    );
+    const connection = createHeydeskConnection("workspace-1", () => ({
+      context: {
+        kind: "page",
+        path: "Notes.md",
+        expectedRevision: "a".repeat(64),
+      },
+      preferences: {
+        model: "gpt-5.6-luna",
+        effort: "low",
+        serviceTier: "fast",
+      },
+    }));
+
+    await connection.send(
+      [
+        {
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", content: "Improve this page" }],
+        },
+      ],
+      undefined,
+      undefined,
+      { threadId: "workspace-1", runId: "run-page" },
+    );
+
+    expect(requestBody).toMatchObject({
+      runId: "run-page",
+      message: "Improve this page",
+      context: { path: "Notes.md", expectedRevision: "a".repeat(64) },
+      preferences: {
+        model: "gpt-5.6-luna",
+        effort: "low",
+        serviceTier: "fast",
+      },
+    });
+  });
+
   it("reconciles a fake AG-UI stream into TanStack UIMessage parts", async () => {
     const stream = createFakeStream();
     const customEvents: string[] = [];

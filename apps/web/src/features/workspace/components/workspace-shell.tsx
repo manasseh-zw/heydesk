@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   Breadcrumb,
@@ -16,7 +16,8 @@ import {
 
 import type { WorkspaceSummary } from "../workspace.types";
 import { AssistantHome } from "@/features/assistant/components/assistant-home";
-import { ArtifactView } from "@/features/artifact/components/artifact-view";
+import { AssistantSessionProvider } from "@/features/assistant/assistant-session";
+import { PageView } from "@/features/page/components/page-view";
 import { WorkspaceSidebar } from "./sidebar";
 
 type WorkspaceShellProps = {
@@ -29,39 +30,57 @@ export function WorkspaceShell({
   onCloseWorkspace,
 }: WorkspaceShellProps) {
   const [draftKind, setDraftKind] = useState<"page" | "document" | null>(null);
-  const [activeArtifactPath, setActiveArtifactPath] = useState<string | null>(null);
+  const [activePagePath, setActivePagePath] = useState<string | null>(null);
+  const flushPageRef = useRef<(() => Promise<void>) | null>(null);
+
+  const afterFlush = async (navigate: () => void) => {
+    try {
+      await flushPageRef.current?.();
+      navigate();
+    } catch {
+      // The editor surfaces the save conflict and keeps the page open.
+    }
+  };
 
   const openHome = () => {
-    setDraftKind(null);
-    setActiveArtifactPath(null);
+    void afterFlush(() => {
+      setDraftKind(null);
+      setActivePagePath(null);
+    });
   };
-  const openArtifact = (path: string) => {
-    setDraftKind(null);
-    setActiveArtifactPath(path);
+  const openPage = (path: string) => {
+    void afterFlush(() => {
+      setDraftKind(null);
+      setActivePagePath(path);
+    });
   };
   const createDraft = (kind: "page" | "document") => {
-    setActiveArtifactPath(null);
-    setDraftKind(kind);
+    void afterFlush(() => {
+      setActivePagePath(null);
+      setDraftKind(kind);
+    });
   };
+  const closeWorkspace = () => void afterFlush(onCloseWorkspace);
   const currentPage = draftKind
     ? `Untitled ${draftKind}`
-    : activeArtifactPath
-      ? artifactLabel(activeArtifactPath)
+    : activePagePath
+      ? pageLabel(activePagePath)
       : "Home";
 
   return (
     <SidebarProvider className="h-svh overflow-hidden">
-      <WorkspaceSidebar
-        activeArtifactPath={activeArtifactPath}
-        onCreateDocument={() => createDraft("document")}
-        onCreatePage={() => createDraft("page")}
-        onOpenArtifact={openArtifact}
-        onOpenHome={openHome}
-        onSwitchWorkspace={onCloseWorkspace}
-        workspace={workspace}
-      />
+      <AssistantSessionProvider workspace={workspace}>
+        <WorkspaceSidebar
+          activePagePath={activePagePath}
+          onCreateDocument={() => createDraft("document")}
+          onCreatePage={() => createDraft("page")}
+          onOpenPage={openPage}
+          onOpenHome={openHome}
+          onSwitchWorkspace={closeWorkspace}
+          workspace={workspace}
+        />
 
-      <SidebarInset className="h-svh min-h-0 overflow-hidden">
+        <SidebarInset className="h-svh min-h-0 overflow-hidden">
         <header className="flex h-12 shrink-0 items-center gap-3 px-3">
           <SidebarTrigger />
           <Breadcrumb>
@@ -85,8 +104,15 @@ export function WorkspaceShell({
           </Breadcrumb>
         </header>
         <main className="flex min-h-0 flex-1 overflow-hidden">
-          {activeArtifactPath ? (
-            <ArtifactView path={activeArtifactPath} workspaceId={workspace.id} />
+          {activePagePath ? (
+            <PageView
+              onOpenPage={openPage}
+              onRegisterFlush={(flush) => {
+                flushPageRef.current = flush;
+              }}
+              path={activePagePath}
+              workspace={workspace}
+            />
           ) : draftKind ? (
             <div className="m-auto max-w-md p-8 text-center">
               <p className="text-sm font-medium">Untitled {draftKind}</p>
@@ -95,15 +121,16 @@ export function WorkspaceShell({
               </p>
             </div>
           ) : (
-            <AssistantHome onOpenArtifact={openArtifact} workspace={workspace} />
+            <AssistantHome onOpenPage={openPage} workspace={workspace} />
           )}
         </main>
-      </SidebarInset>
+        </SidebarInset>
+      </AssistantSessionProvider>
     </SidebarProvider>
   );
 }
 
-function artifactLabel(path: string): string {
+function pageLabel(path: string): string {
   const filename = path.split("/").at(-1) ?? path;
   return filename.replace(/\.mdx?$/i, "");
 }

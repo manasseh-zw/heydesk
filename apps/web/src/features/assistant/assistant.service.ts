@@ -4,12 +4,17 @@ import type { UIMessage } from "@tanstack/ai";
 import type {
   AssistantConversationSnapshot,
   AssistantInteraction,
+  AssistantModel,
   AssistantReadiness,
   AssistantSnapshot,
 } from "./assistant.types";
 
 export async function getAssistantReadiness(): Promise<AssistantReadiness> {
   return request("/api/assistant/readiness");
+}
+
+export async function getAssistantModels(): Promise<AssistantModel[]> {
+  return request("/api/assistant/models");
 }
 
 export async function startAssistantLogin(): Promise<{
