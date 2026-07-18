@@ -15,7 +15,7 @@ import {
 } from "@heydesk/ui/components/sidebar";
 
 import type { WorkspaceSummary } from "../workspace.types";
-import { HomeComposer } from "./home-composer";
+import { AssistantHome } from "@/features/assistant/components/assistant-home";
 import { WorkspaceSidebar } from "./sidebar";
 
 type WorkspaceShellProps = {
@@ -23,7 +23,10 @@ type WorkspaceShellProps = {
   onCloseWorkspace: () => void;
 };
 
-export function WorkspaceShell({ workspace, onCloseWorkspace }: WorkspaceShellProps) {
+export function WorkspaceShell({
+  workspace,
+  onCloseWorkspace,
+}: WorkspaceShellProps) {
   const [draftKind, setDraftKind] = useState<"page" | "document" | null>(null);
 
   return (
@@ -43,10 +46,7 @@ export function WorkspaceShell({ workspace, onCloseWorkspace }: WorkspaceShellPr
               <BreadcrumbItem>
                 <BreadcrumbLink
                   render={
-                    <button
-                      onClick={() => setDraftKind(null)}
-                      type="button"
-                    />
+                    <button onClick={() => setDraftKind(null)} type="button" />
                   }
                 >
                   {workspace.name}
@@ -61,16 +61,16 @@ export function WorkspaceShell({ workspace, onCloseWorkspace }: WorkspaceShellPr
             </BreadcrumbList>
           </Breadcrumb>
         </header>
-        <main className="flex min-h-0 flex-1 items-center justify-center p-8">
+        <main className="flex min-h-0 flex-1 overflow-hidden">
           {draftKind ? (
-            <div className="max-w-md text-center">
+            <div className="m-auto max-w-md p-8 text-center">
               <p className="text-sm font-medium">Untitled {draftKind}</p>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
                 A new {draftKind} is ready for its editor.
               </p>
             </div>
           ) : (
-            <HomeComposer />
+            <AssistantHome workspace={workspace} />
           )}
         </main>
       </SidebarInset>

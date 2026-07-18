@@ -5,6 +5,7 @@ import {
   MicIcon,
   PaperclipIcon,
   PlusIcon,
+  SquareIcon,
   SparklesIcon,
   WrenchIcon,
 } from "lucide-react";
@@ -21,8 +22,10 @@ import {
   ComposerRichInput,
   ComposerSuggestions,
   type ComposerItem,
+  type ComposerValue,
 } from "@/components/ai/composer-rich";
 import { LogoMark } from "@/components/logo";
+import { useState } from "react";
 
 const commands: ComposerItem[] = [
   {
@@ -45,31 +48,61 @@ const commands: ComposerItem[] = [
   },
 ];
 
-const workspaceItems: ComposerItem[] = [
-  { id: "welcome", label: "Welcome", icon: <FileTextIcon /> },
-  { id: "company-notes", label: "Company notes", icon: <FileTextIcon /> },
-  { id: "weekly-planning", label: "Weekly planning", icon: <FileTextIcon /> },
-  { id: "founder-update", label: "Founder update", icon: <FileTextIcon /> },
-  { id: "product-brief", label: "Product brief", icon: <FileTextIcon /> },
-];
+type HomeComposerProps = {
+  compact?: boolean;
+  disabled?: boolean;
+  isRunning?: boolean;
+  onStop?: () => void;
+  onSubmit?: (text: string) => void | Promise<void>;
+};
 
-export function HomeComposer() {
+const emptyValue: ComposerValue = { text: "", segments: [] };
+
+export function HomeComposer({
+  compact = false,
+  disabled = false,
+  isRunning = false,
+  onStop,
+  onSubmit,
+}: HomeComposerProps) {
+  const [value, setValue] = useState<ComposerValue>(emptyValue);
+
+  const submit = (next: ComposerValue) => {
+    const text = next.text.trim();
+    if (!text || !onSubmit) return;
+    void onSubmit(text);
+    setValue(emptyValue);
+  };
+
   return (
-    <div className="flex w-full max-w-2xl -translate-y-8 flex-col items-center md:-translate-y-12">
-      <LogoMark className="size-10 text-logo-mark" />
-      <h1 className="mt-5 font-brand text-2xl font-light tracking-tight">
-        Create something wonderful
-      </h1>
+    <div
+      className={
+        compact
+          ? "w-full max-w-3xl"
+          : "flex w-full max-w-2xl -translate-y-8 flex-col items-center md:-translate-y-12"
+      }
+    >
+      {!compact && <LogoMark className="size-10 text-logo-mark" />}
+      {!compact && (
+        <h1 className="mt-5 font-brand text-2xl font-light tracking-tight">
+          Create something wonderful
+        </h1>
+      )}
 
-      <Composer className="mt-8 w-full rounded-4xl border border-border/60 shadow-[0_8px_24px_-16px_rgba(15,23,42,0.18)] focus-within:border-primary/25 focus-within:ring-1 focus-within:ring-primary/20 dark:border-border/70 dark:shadow-[0_8px_24px_-16px_rgba(0,0,0,0.45)]">
+      <Composer
+        className={`${compact ? "" : "mt-8"} w-full rounded-4xl border border-border/60 shadow-[0_8px_24px_-16px_rgba(15,23,42,0.18)] focus-within:border-primary/25 focus-within:ring-1 focus-within:ring-primary/20 dark:border-border/70 dark:shadow-[0_8px_24px_-16px_rgba(0,0,0,0.45)]`}
+        disabled={disabled || isRunning}
+      >
         <ComposerRichInput
-          autoFocus
+          autoFocus={!compact}
           className="[&_[data-slot=composer-rich-input]]:min-h-20 [&_[data-slot=composer-rich-input]]:px-4 [&_[data-slot=composer-rich-input]]:py-4 [&_[data-slot=composer-rich-input-skeleton]]:min-h-20 [&_[data-slot=composer-rich-input-skeleton]]:px-4 [&_[data-slot=composer-rich-input-skeleton]]:py-4"
-          placeholder="Ask Heydesk anything. Type / for actions or @ to add context."
+          onSubmit={submit}
+          onValueChange={setValue}
+          placeholder="Ask Heydesk anything. Type / for actions."
           triggers={{
             "/": { items: commands },
-            "@": { items: workspaceItems, hideOnEmpty: false },
           }}
+          value={value}
         />
         <ComposerSuggestions />
         <ComposerToolbar>
@@ -103,17 +136,29 @@ export function HomeComposer() {
             >
               <MicIcon />
             </Button>
-            <ComposerSubmit
-              render={
-                <Button
-                  aria-label="Send"
-                  className="rounded-full"
-                  size="icon-sm"
-                />
-              }
-            >
-              <ArrowUpIcon />
-            </ComposerSubmit>
+            {isRunning ? (
+              <Button
+                aria-label="Stop"
+                className="rounded-full"
+                onClick={onStop}
+                size="icon-sm"
+                type="button"
+              >
+                <SquareIcon className="size-3 fill-current" />
+              </Button>
+            ) : (
+              <ComposerSubmit
+                render={
+                  <Button
+                    aria-label="Send"
+                    className="rounded-full"
+                    size="icon-sm"
+                  />
+                }
+              >
+                <ArrowUpIcon />
+              </ComposerSubmit>
+            )}
           </ComposerToolbarSpacer>
         </ComposerToolbar>
       </Composer>
