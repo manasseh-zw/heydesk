@@ -32,7 +32,11 @@ export class WorkspaceRepository {
 
     await mkdir(dirname(this.stateFile), { recursive: true });
     const temporaryFile = `${this.stateFile}.tmp`;
-    await writeFile(temporaryFile, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await writeFile(
+      temporaryFile,
+      `${JSON.stringify(value, null, 2)}\n`,
+      "utf8",
+    );
     await rename(temporaryFile, this.stateFile);
   }
 }
@@ -44,7 +48,22 @@ export function createWorkspaceStateFile(homeDirectory: string): string {
 function isRecentWorkspaceFile(value: unknown): value is RecentWorkspaceFile {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
-  return candidate.version === 1 && Array.isArray(candidate.workspaces);
+  return (
+    candidate.version === 1 &&
+    Array.isArray(candidate.workspaces) &&
+    candidate.workspaces.every(isWorkspaceSummary)
+  );
+}
+
+function isWorkspaceSummary(value: unknown): value is WorkspaceSummary {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    (candidate.id === undefined || typeof candidate.id === "string") &&
+    typeof candidate.name === "string" &&
+    typeof candidate.path === "string" &&
+    typeof candidate.lastOpenedAt === "string"
+  );
 }
 
 function isMissingFileError(error: unknown): boolean {
