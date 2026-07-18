@@ -11,11 +11,18 @@
     "check-types": "vite build && tsc --noEmit"
   },
   "dependencies": {
+    "@base-ui/react": "^1.6.0",
     "@heydesk/env": "workspace:*",
     "@heydesk/ui": "workspace:*",
     "@hookform/resolvers": "^5.4.0",
     "@tailwindcss/vite": "^4.3.2",
     "@tanstack/react-router": "^1.170.17",
+    "@tiptap/core": "^3.28.0",
+    "@tiptap/extension-placeholder": "^3.28.0",
+    "@tiptap/pm": "^3.28.0",
+    "@tiptap/react": "^3.28.0",
+    "@tiptap/starter-kit": "^3.28.0",
+    "@tiptap/suggestion": "^3.28.0",
     "clsx": "^2.1.1",
     "dotenv": "catalog:",
     "lucide-react": "catalog:",

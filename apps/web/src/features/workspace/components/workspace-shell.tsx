@@ -15,6 +15,7 @@ import {
 } from "@heydesk/ui/components/sidebar";
 
 import type { WorkspaceSummary } from "../workspace.types";
+import { HomeComposer } from "./home-composer";
 import { WorkspaceSidebar } from "./sidebar";
 
 type WorkspaceShellProps = {
@@ -61,16 +62,16 @@ export function WorkspaceShell({ workspace, onCloseWorkspace }: WorkspaceShellPr
           </Breadcrumb>
         </header>
         <main className="flex min-h-0 flex-1 items-center justify-center p-8">
-          <div className="max-w-md text-center">
-            <p className="text-sm font-medium">
-              {draftKind ? `Untitled ${draftKind}` : workspace.name}
-            </p>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              {draftKind
-                ? `A new ${draftKind} is ready for its editor.`
-                : "Your workspace frame is ready. Pages, content, and assistant activity will live here."}
-            </p>
-          </div>
+          {draftKind ? (
+            <div className="max-w-md text-center">
+              <p className="text-sm font-medium">Untitled {draftKind}</p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                A new {draftKind} is ready for its editor.
+              </p>
+            </div>
+          ) : (
+            <HomeComposer />
+          )}
         </main>
       </SidebarInset>
     </SidebarProvider>
