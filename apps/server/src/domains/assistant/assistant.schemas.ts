@@ -4,11 +4,27 @@ export const startAssistantRunSchema = z.object({
   runId: z.string().min(1).max(200),
   message: z.string().trim().min(1).max(100_000),
   context: z
-    .object({
-      kind: z.literal("page"),
-      path: z.string().trim().min(1).max(2_000),
-      expectedRevision: z.string().length(64),
-    })
+    .discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("page"),
+        path: z.string().trim().min(1).max(2_000),
+        expectedRevision: z.string().length(64),
+      }),
+      z.object({
+        kind: z.literal("document"),
+        path: z.string().trim().min(1).max(2_000),
+        expectedRevision: z.string().length(64),
+      }),
+    ])
+    .optional(),
+  scope: z
+    .discriminatedUnion("kind", [
+      z.object({ kind: z.literal("workspace") }),
+      z.object({
+        kind: z.literal("document"),
+        path: z.string().trim().min(1).max(2_000),
+      }),
+    ])
     .optional(),
   preferences: z
     .object({
@@ -34,3 +50,10 @@ export const assistantInteractionResponseSchema = z
       message: "Provide an approval decision or answers.",
     },
   );
+
+export const documentToolResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.unknown().optional(),
+  error: z.string().max(20_000).optional(),
+  revision: z.string().length(64).optional(),
+});

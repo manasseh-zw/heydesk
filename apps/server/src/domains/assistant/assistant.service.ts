@@ -2,8 +2,11 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import { env } from "@heydesk/env/server";
+import { getToolSchemas } from "@eigenpal/docx-editor-agents/server";
+import { z } from "zod";
 
 import { PageService } from "../page/page.service";
+import { DocumentService } from "../document/document.service";
 import { workspaceService } from "../workspace/workspace.service";
 import type { WorkspaceService } from "../workspace/workspace.service";
 import type { WorkspaceSummary } from "../workspace/workspace.types";
@@ -26,10 +29,11 @@ import {
   type CodexNotification,
   type CodexServerRequestResponder,
 } from "../../infrastructure/codex/codex.types";
-import { AssistantRepository } from "./assistant.repository";
+import { AssistantRepository, scopeKey } from "./assistant.repository";
 import { canAutoAcceptFileChanges } from "./assistant-safety";
 import type {
   AssistantActivity,
+  AssistantDocumentToolCall,
   AssistantEvent,
   AssistantFileChange,
   AssistantInteraction,
@@ -38,12 +42,143 @@ import type {
   AssistantRun,
   AssistantRunContext,
   AssistantRunPreferences,
+  AssistantScope,
   AssistantSnapshot,
   SequencedAssistantEvent,
 } from "./assistant.types";
 
 const INTERACTION_TIMEOUT_MS = 5 * 60_000;
 const MODEL_CACHE_MS = 30_000;
+const DOCUMENT_TOOL_TIMEOUT_MS = 60_000;
+const DOCUMENT_TOOL_CONTRACT_VERSION = "document-tools-v2";
+const DOCUMENT_TOOL_NAMES = new Set([
+  "read_document",
+  "read_selection",
+  "read_page",
+  "read_pages",
+  "find_text",
+  "read_comments",
+  "read_changes",
+  "add_comment",
+  "suggest_change",
+  "apply_formatting",
+  "set_paragraph_style",
+  "scroll",
+]);
+const MUTATING_DOCUMENT_TOOLS = new Set([
+  "add_comment",
+  "suggest_change",
+  "apply_formatting",
+  "set_paragraph_style",
+]);
+
+const singleParagraphTextSchema = z
+  .string()
+  .max(8_000)
+  .refine((value) => !/[\r\n]/.test(value), {
+    message: "Tracked document changes must stay within one paragraph.",
+  });
+const documentParagraphIdSchema = z.string().trim().min(1).max(128);
+const suggestChangeArgumentsSchema = z
+  .object({
+    paraId: documentParagraphIdSchema,
+    search: singleParagraphTextSchema,
+    replaceWith: singleParagraphTextSchema,
+  })
+  .strict()
+  .refine(({ search, replaceWith }) => search.length > 0 || replaceWith.length > 0, {
+    message: "A tracked change must search for or insert text.",
+  });
+const underlineStyleSchema = z.enum([
+  "single",
+  "words",
+  "double",
+  "thick",
+  "dotted",
+  "dottedHeavy",
+  "dash",
+  "dashedHeavy",
+  "dashLong",
+  "dashLongHeavy",
+  "dotDash",
+  "dashDotHeavy",
+  "dotDotDash",
+  "dashDotDotHeavy",
+  "wave",
+  "wavyHeavy",
+  "wavyDouble",
+  "none",
+]);
+const highlightColorSchema = z.enum([
+  "black",
+  "blue",
+  "cyan",
+  "darkBlue",
+  "darkCyan",
+  "darkGray",
+  "darkGreen",
+  "darkMagenta",
+  "darkRed",
+  "darkYellow",
+  "green",
+  "lightGray",
+  "magenta",
+  "red",
+  "white",
+  "yellow",
+  "none",
+]);
+const formattingMarksSchema = z
+  .object({
+    bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+    underline: z
+      .union([
+        z.boolean(),
+        z.object({ style: underlineStyleSchema }).strict(),
+      ])
+      .optional(),
+    strike: z.boolean().optional(),
+    color: z
+      .object({
+        rgb: z.string().regex(/^[0-9A-Fa-f]{6}$/).optional(),
+        themeColor: z.string().trim().min(1).max(64).optional(),
+      })
+      .strict()
+      .refine(({ rgb, themeColor }) => Boolean(rgb || themeColor), {
+        message: "A font color needs an RGB or theme color value.",
+      })
+      .optional(),
+    highlight: highlightColorSchema.optional(),
+    fontSize: z.number().finite().min(1).max(400).optional(),
+    fontFamily: z
+      .object({
+        ascii: z.string().trim().min(1).max(128).optional(),
+        hAnsi: z.string().trim().min(1).max(128).optional(),
+      })
+      .strict()
+      .refine(({ ascii, hAnsi }) => Boolean(ascii || hAnsi), {
+        message: "A font family needs an ASCII or high-ANSI name.",
+      })
+      .optional(),
+  })
+  .strict()
+  .refine((marks) => Object.keys(marks).length > 0, {
+    message: "Choose at least one formatting change.",
+  });
+const applyFormattingArgumentsSchema = z
+  .object({
+    paraId: documentParagraphIdSchema,
+    search: singleParagraphTextSchema.optional(),
+    marks: formattingMarksSchema,
+  })
+  .strict();
+const setParagraphStyleArgumentsSchema = z
+  .object({
+    paraId: documentParagraphIdSchema,
+    styleId: z.string().trim().min(1).max(128),
+  })
+  .strict();
 
 type AssistantEventListener = (event: SequencedAssistantEvent) => void;
 
@@ -69,14 +204,25 @@ type PendingInteraction = {
   active: ActiveRun;
 };
 
+type PendingDocumentTool = {
+  call: AssistantDocumentToolCall;
+  responder: CodexServerRequestResponder;
+  active: ActiveRun;
+  claimed: boolean;
+  timeout: NodeJS.Timeout;
+};
+
 export class AssistantService {
   private readonly repositories = new Map<string, AssistantRepository>();
+  private readonly reconciledWorkspaces = new Set<string>();
   private readonly activeByThread = new Map<string, ActiveRun>();
   private readonly activeByRun = new Map<string, ActiveRun>();
   private readonly listeners = new Map<string, Set<AssistantEventListener>>();
   private readonly pendingInteractions = new Map<string, PendingInteraction>();
+  private readonly pendingDocumentTools = new Map<string, PendingDocumentTool>();
   private modelCache: { expiresAt: number; models: CodexModel[] } | null = null;
   private readonly pages: PageService;
+  private readonly documents: DocumentService;
 
   constructor(
     private readonly codex: CodexAppServer,
@@ -87,6 +233,7 @@ export class AssistantService {
     private readonly options: AssistantServiceOptions = {},
   ) {
     this.pages = new PageService(workspaces);
+    this.documents = new DocumentService(workspaces);
     codex.on("notification", (notification) => {
       void this.handleNotification(notification).catch((error) => {
         console.error(
@@ -189,27 +336,36 @@ export class AssistantService {
     await this.codex.request("account/login/cancel", { loginId });
   }
 
-  async getSnapshot(workspaceId: string): Promise<AssistantSnapshot> {
-    const { repository } = await this.getWorkspaceContext(workspaceId);
+  async getSnapshot(
+    workspaceId: string,
+    scope: AssistantScope = { kind: "workspace" },
+  ): Promise<AssistantSnapshot> {
+    const { repository } = await this.getWorkspaceContext(workspaceId, scope);
     return repository.getSnapshot();
   }
 
   async getEvents(
     workspaceId: string,
     afterSequence = 0,
+    scope: AssistantScope = { kind: "workspace" },
   ): Promise<SequencedAssistantEvent[]> {
-    const { repository } = await this.getWorkspaceContext(workspaceId);
+    const { repository } = await this.getWorkspaceContext(workspaceId, scope);
     return repository.listEvents(afterSequence);
   }
 
-  subscribe(workspaceId: string, listener: AssistantEventListener): () => void {
+  subscribe(
+    workspaceId: string,
+    listener: AssistantEventListener,
+    scope: AssistantScope = { kind: "workspace" },
+  ): () => void {
+    const listenerKey = repositoryKey(workspaceId, scope);
     const listeners =
-      this.listeners.get(workspaceId) ?? new Set<AssistantEventListener>();
+      this.listeners.get(listenerKey) ?? new Set<AssistantEventListener>();
     listeners.add(listener);
-    this.listeners.set(workspaceId, listeners);
+    this.listeners.set(listenerKey, listeners);
     return () => {
       listeners.delete(listener);
-      if (listeners.size === 0) this.listeners.delete(workspaceId);
+      if (listeners.size === 0) this.listeners.delete(listenerKey);
     };
   }
 
@@ -220,22 +376,29 @@ export class AssistantService {
     options: {
       context?: AssistantRunContext;
       preferences?: AssistantRunPreferences;
+      scope?: AssistantScope;
     } = {},
   ): Promise<AssistantRun> {
     const readiness = await this.getReadiness();
     if (readiness.status !== "ready")
       throw new AssistantUnavailableError(readiness);
 
+    const scope = options.scope ?? scopeForContext(options.context);
+    if (
+      scope.kind === "document" &&
+      (options.context?.kind !== "document" || options.context.path !== scope.path)
+    ) {
+      throw new AssistantConflictError("The document run context does not match its assistant scope.");
+    }
     const { workspace, repository } =
-      await this.getWorkspaceContext(workspaceId);
+      await this.getWorkspaceContext(workspaceId, scope);
     if (options.context) {
-      const page = await this.pages.read(
-        workspaceId,
-        options.context.path,
-      );
-      if (page.revision !== options.context.expectedRevision) {
+      const current = options.context.kind === "page"
+        ? await this.pages.read(workspaceId, options.context.path)
+        : await this.documents.read(workspaceId, options.context.path);
+      if (current.revision !== options.context.expectedRevision) {
         throw new AssistantConflictError(
-          "That page changed before the assistant run started.",
+          `That ${options.context.kind} changed before the assistant run started.`,
         );
       }
     }
@@ -244,13 +407,14 @@ export class AssistantService {
       throw new AssistantConflictError("That assistant run already exists.");
     }
 
-    const threadId = await this.ensureThread(workspace, repository);
+    const threadId = await this.ensureThread(workspace, repository, scope);
     const run: AssistantRun = {
       id: runId,
       workspaceId,
       threadId,
       status: "starting",
       userText,
+      scope,
       ...(options.context ? { context: options.context } : {}),
       preferences,
       createdAt: new Date().toISOString(),
@@ -281,14 +445,17 @@ export class AssistantService {
             },
           ],
           cwd: workspace.path,
-          approvalPolicy: "untrusted",
-          sandboxPolicy: {
-            type: "workspaceWrite",
-            writableRoots: [workspace.path],
-            networkAccess: false,
-            excludeTmpdirEnvVar: true,
-            excludeSlashTmp: true,
-          },
+          approvalPolicy: scope.kind === "document" ? "never" : "untrusted",
+          sandboxPolicy:
+            scope.kind === "document"
+              ? { type: "readOnly" }
+              : {
+                  type: "workspaceWrite",
+                  writableRoots: [workspace.path],
+                  networkAccess: false,
+                  excludeTmpdirEnvVar: true,
+                  excludeSlashTmp: true,
+                },
           model: preferences.model,
           effort: preferences.effort,
           ...(preferences.serviceTier
@@ -441,19 +608,100 @@ export class AssistantService {
     await pending.active.repository.updateRun(pending.active.run);
   }
 
+  async claimDocumentTool(workspaceId: string, callId: string): Promise<void> {
+    const pending = this.pendingDocumentTools.get(callId);
+    if (!pending || pending.active.workspace.id !== workspaceId) {
+      throw new AssistantNotFoundError("That document action is no longer pending.");
+    }
+    if (pending.claimed) {
+      throw new AssistantConflictError("That document action is already being handled.");
+    }
+    pending.claimed = true;
+  }
+
+  async respondToDocumentTool(
+    workspaceId: string,
+    callId: string,
+    result: { success: boolean; data?: unknown; error?: string; revision?: string },
+  ): Promise<void> {
+    const pending = this.pendingDocumentTools.get(callId);
+    if (!pending || pending.active.workspace.id !== workspaceId) {
+      throw new AssistantNotFoundError("That document action is no longer pending.");
+    }
+    if (!pending.claimed) {
+      throw new AssistantConflictError("Claim that document action before responding.");
+    }
+    const context = pending.active.run.context;
+    if (
+      result.success &&
+      MUTATING_DOCUMENT_TOOLS.has(pending.call.tool) &&
+      context?.kind === "document"
+    ) {
+      if (!result.revision) {
+        throw new AssistantConflictError("A saved document revision is required.");
+      }
+      const current = await this.documents.read(workspaceId, context.path);
+      if (current.revision !== result.revision) {
+        throw new AssistantConflictError("The reported document revision is not durable.");
+      }
+      await this.publish(pending.active, {
+        type: "artifact.committed",
+        artifact: {
+          id: `${pending.active.run.id}:${context.path}:${result.revision}`,
+          runId: pending.active.run.id,
+          path: context.path,
+          kind: "document",
+        },
+      });
+    }
+    let responseResult = result;
+    let text = JSON.stringify(
+      result.success
+        ? { success: true, data: result.data ?? null }
+        : { success: false, error: result.error ?? "The document action failed." },
+    );
+    if (Buffer.byteLength(text, "utf8") > 256 * 1024) {
+      responseResult = {
+        success: false,
+        error: "The document action result exceeded Heydesk's size limit.",
+      };
+      text = JSON.stringify(responseResult);
+    }
+    clearTimeout(pending.timeout);
+    this.pendingDocumentTools.delete(callId);
+    pending.responder.resolve({
+      contentItems: [{ type: "inputText", text }],
+      success: responseResult.success,
+    });
+    await this.publish(pending.active, {
+      type: "document-tool.resolved",
+      callId,
+    });
+  }
+
   private async ensureThread(
     workspace: WorkspaceSummary,
     repository: AssistantRepository,
+    scope: AssistantScope,
   ): Promise<string> {
-    const existing = await repository.getThreadId();
-    if (existing) {
+    const expectedContract =
+      scope.kind === "document" ? DOCUMENT_TOOL_CONTRACT_VERSION : undefined;
+    const existing = await repository.getThread();
+    if (
+      existing &&
+      expectedContract &&
+      existing.toolContractVersion !== expectedContract
+    ) {
+      await repository.clearThread();
+    }
+    if (existing && existing.toolContractVersion === expectedContract) {
       try {
         const resumed = threadResponseSchema.parse(
           await this.codex.request("thread/resume", {
-            threadId: existing,
+            threadId: existing.id,
             cwd: workspace.path,
-            approvalPolicy: "untrusted",
-            sandbox: "workspace-write",
+            approvalPolicy: scope.kind === "document" ? "never" : "untrusted",
+            sandbox: scope.kind === "document" ? "read-only" : "workspace-write",
             model: env.CODEX_MODEL,
           }),
         );
@@ -468,16 +716,21 @@ export class AssistantService {
     const started = threadResponseSchema.parse(
       await this.codex.request("thread/start", {
         cwd: workspace.path,
-        approvalPolicy: "untrusted",
-        sandbox: "workspace-write",
+        approvalPolicy: scope.kind === "document" ? "never" : "untrusted",
+        sandbox: scope.kind === "document" ? "read-only" : "workspace-write",
         model: env.CODEX_MODEL,
         developerInstructions:
-          "Operate only inside the current Heydesk workspace. Prefer readable Markdown or MDX artifacts. Never use network access. Treat .heydesk as private application state and do not modify it.",
+          scope.kind === "document"
+            ? buildDocumentDeveloperInstructions(scope.path)
+            : "Operate only inside the current Heydesk workspace. Prefer readable Markdown or MDX artifacts. Never use network access. Treat .heydesk as private application state and do not modify it.",
+        ...(scope.kind === "document"
+          ? { dynamicTools: documentDynamicTools() }
+          : {}),
         ephemeral: this.options.ephemeralThreads ?? false,
       }),
     );
     assertSelectedModel(started.model);
-    await repository.saveThread(started.thread.id);
+    await repository.saveThread(started.thread.id, expectedContract);
     return started.thread.id;
   }
 
@@ -663,6 +916,11 @@ export class AssistantService {
       return;
     }
 
+    if (responder.request.method === "item/tool/call") {
+      await this.requestDocumentTool(active, responder, params);
+      return;
+    }
+
     if (responder.request.method === "item/fileChange/requestApproval") {
       const itemId = stringValue(params.itemId);
       const item = itemId ? active.items.get(itemId) : undefined;
@@ -744,7 +1002,96 @@ export class AssistantService {
     }
   }
 
+  private async requestDocumentTool(
+    active: ActiveRun,
+    responder: CodexServerRequestResponder,
+    params: Record<string, unknown>,
+  ): Promise<void> {
+    const context = active.run.context;
+    const namespace = stringValue(params.namespace);
+    const tool = stringValue(params.tool);
+    const callId = stringValue(params.callId);
+    const argumentsValue = asRecord(params.arguments);
+    if (
+      context?.kind !== "document" ||
+      namespace !== "document" ||
+      !tool ||
+      !DOCUMENT_TOOL_NAMES.has(tool) ||
+      !callId
+    ) {
+      responder.resolve({
+        contentItems: [
+          { type: "inputText", text: JSON.stringify({ success: false, error: "That document tool is not available." }) },
+        ],
+        success: false,
+      });
+      return;
+    }
+    const validatedArguments = validateDocumentToolArguments(
+      tool,
+      argumentsValue,
+    );
+    if (!validatedArguments.success) {
+      responder.resolve({
+        contentItems: [
+          {
+            type: "inputText",
+            text: JSON.stringify({
+              success: false,
+              error: validatedArguments.error,
+            }),
+          },
+        ],
+        success: false,
+      });
+      return;
+    }
+    if (this.pendingDocumentTools.has(callId)) {
+      responder.reject(-32600, "That document action is already pending.");
+      return;
+    }
+    const call: AssistantDocumentToolCall = {
+      callId,
+      runId: active.run.id,
+      tool,
+      arguments: validatedArguments.arguments,
+      expiresAt: new Date(Date.now() + DOCUMENT_TOOL_TIMEOUT_MS).toISOString(),
+    };
+    const timeout = setTimeout(() => {
+      this.pendingDocumentTools.delete(callId);
+      responder.resolve({
+        contentItems: [
+          { type: "inputText", text: JSON.stringify({ success: false, error: "The document editor did not respond in time." }) },
+        ],
+        success: false,
+      });
+      void this.publish(active, { type: "document-tool.resolved", callId });
+    }, DOCUMENT_TOOL_TIMEOUT_MS);
+    this.pendingDocumentTools.set(callId, {
+      call,
+      responder,
+      active,
+      claimed: false,
+      timeout,
+    });
+    await this.publish(active, { type: "document-tool.requested", call });
+  }
+
   private async handleCodexExit(error: Error): Promise<void> {
+    for (const pending of this.pendingDocumentTools.values()) {
+      clearTimeout(pending.timeout);
+      pending.responder.resolve({
+        contentItems: [
+          { type: "inputText", text: JSON.stringify({ success: false, error: "Codex exited before the document action completed." }) },
+        ],
+        success: false,
+      });
+      await this.publish(pending.active, {
+        type: "document-tool.resolved",
+        callId: pending.call.callId,
+      });
+    }
+    this.pendingDocumentTools.clear();
     for (const pending of this.pendingInteractions.values()) {
       clearTimeout(pending.timeout);
       await this.publish(pending.active, {
@@ -790,21 +1137,31 @@ export class AssistantService {
     event: AssistantEvent,
   ): Promise<void> {
     const sequenced = await active.repository.appendEvent(active.run.id, event);
-    for (const listener of this.listeners.get(active.workspace.id) ?? [])
+    for (
+      const listener of
+        this.listeners.get(repositoryKey(active.workspace.id, active.run.scope)) ?? []
+    )
       listener(sequenced);
   }
 
-  private async getWorkspaceContext(workspaceId: string): Promise<{
+  private async getWorkspaceContext(
+    workspaceId: string,
+    scope: AssistantScope = { kind: "workspace" },
+  ): Promise<{
     workspace: WorkspaceSummary;
     repository: AssistantRepository;
   }> {
     const workspace = await this.workspaces.getById(workspaceId);
-    let repository = this.repositories.get(workspaceId);
+    const key = repositoryKey(workspaceId, scope);
+    let repository = this.repositories.get(key);
     if (!repository) {
-      repository = new AssistantRepository(workspaceId, workspace.path);
-      this.repositories.set(workspaceId, repository);
-      const staleRun = await repository.getActiveRun();
-      if (staleRun) {
+      repository = new AssistantRepository(workspaceId, workspace.path, scope);
+      this.repositories.set(key, repository);
+      const staleRun = this.reconciledWorkspaces.has(workspaceId)
+        ? null
+        : await repository.getActiveRun();
+      this.reconciledWorkspaces.add(workspaceId);
+      if (staleRun && !this.activeByRun.has(staleRun.id)) {
         staleRun.status = "failed";
         staleRun.completedAt = new Date().toISOString();
         const error = {
@@ -1010,6 +1367,7 @@ function changesMatchRunScope(
   active: ActiveRun,
   changes: AssistantFileChange[],
 ): boolean {
+  if (active.run.context?.kind === "document") return false;
   if (active.run.context?.kind !== "page") return true;
   if (changes.length === 0) return false;
   return changes.every(
@@ -1024,6 +1382,19 @@ function buildCodexInput(
   context?: AssistantRunContext,
 ): string {
   if (!context) return userText;
+  if (context.kind === "document") {
+    return [
+      "[Heydesk document context]",
+      `The user is currently viewing ${context.path}.`,
+      `The durable document revision before this turn is ${context.expectedRevision}.`,
+      "Use the document namespace tools for all inspection and edits.",
+      "Use suggest_change for reviewable text edits and keep each call within one paragraph.",
+      "Use apply_formatting or set_paragraph_style when the user asks for formatting.",
+      "[/Heydesk document context]",
+      "",
+      userText,
+    ].join("\n");
+  }
   return [
     "[Heydesk page context]",
     `The user is currently viewing ${context.path}.`,
@@ -1033,6 +1404,71 @@ function buildCodexInput(
     "",
     userText,
   ].join("\n");
+}
+
+function buildDocumentDeveloperInstructions(path: string): string {
+  return [
+    `You are editing ${path} inside Heydesk.`,
+    "Use only the document namespace tools. Never use shell commands, filesystem writes, or network access.",
+    "Inspect the relevant text and pending changes before mutating the document, and use the stable paraId returned by the read tools.",
+    "Use suggest_change for reviewable text replacements, insertions, and deletions. Each suggestion must target exactly one paragraph: search and replaceWith must never contain line breaks. Use one suggest_change call per paragraph and avoid ranges that overlap an unresolved tracked change.",
+    "Use apply_formatting for character styling such as bold, italic, underline, color, highlight, font size, or font family. Use set_paragraph_style for Title, Heading1, Heading2, Quote, Normal, and other styles already defined in the document.",
+    "Formatting and paragraph-style tools apply direct edits rather than tracked changes. Use them only when the user explicitly asks for formatting or when formatting is essential to the requested result.",
+    "Never accept or reject tracked changes on the user's behalf.",
+  ].join(" ");
+}
+
+function scopeForContext(context?: AssistantRunContext): AssistantScope {
+  return context?.kind === "document"
+    ? { kind: "document", path: context.path }
+    : { kind: "workspace" };
+}
+
+function repositoryKey(workspaceId: string, scope: AssistantScope): string {
+  return `${workspaceId}:${scope.kind}:${scopeKey(scope)}`;
+}
+
+function documentDynamicTools() {
+  return [
+    {
+      type: "namespace" as const,
+      name: "document",
+      description: "Inspect the active Word document and propose reviewable changes.",
+      tools: getToolSchemas()
+        .filter((schema) => DOCUMENT_TOOL_NAMES.has(schema.function.name))
+        .map((schema) => ({
+          type: "function" as const,
+          name: schema.function.name,
+          description: schema.function.description,
+          inputSchema: schema.function.parameters,
+        })),
+    },
+  ];
+}
+
+export function validateDocumentToolArguments(
+  tool: string,
+  argumentsValue: Record<string, unknown>,
+):
+  | { success: true; arguments: Record<string, unknown> }
+  | { success: false; error: string } {
+  const schema =
+    tool === "suggest_change"
+      ? suggestChangeArgumentsSchema
+      : tool === "apply_formatting"
+        ? applyFormattingArgumentsSchema
+        : tool === "set_paragraph_style"
+          ? setParagraphStyleArgumentsSchema
+          : undefined;
+  if (!schema) return { success: true, arguments: argumentsValue };
+  const result = schema.safeParse(argumentsValue);
+  if (result.success) return { success: true, arguments: result.data };
+  return {
+    success: false,
+    error:
+      result.error.issues[0]?.message ??
+      `The arguments for ${tool} are invalid.`,
+  };
 }
 
 function mapPlanStatus(

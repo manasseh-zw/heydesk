@@ -112,6 +112,10 @@ export function projectAssistantEvent(event: AssistantEvent): StreamChunk[] {
       return [custom("heydesk:interaction-requested", event.interaction)];
     case "interaction.resolved":
       return [custom("heydesk:interaction-resolved", event)];
+    case "document-tool.requested":
+      return [custom("heydesk:document-tool-call", event.call)];
+    case "document-tool.resolved":
+      return [custom("heydesk:document-tool-resolved", event)];
     case "artifact.committed":
       return [custom("heydesk:artifact-committed", event.artifact)];
     case "run.status":

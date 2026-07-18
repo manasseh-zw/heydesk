@@ -5,6 +5,7 @@ import type {
   AssistantEvent,
   AssistantRun,
   AssistantRunStatus,
+  AssistantScope,
   AssistantSnapshot,
   SequencedAssistantEvent,
 } from "./assistant.types";
@@ -23,43 +24,82 @@ export class AssistantRepository {
   constructor(
     readonly workspaceId: string,
     readonly workspacePath: string,
+    readonly scope: AssistantScope = { kind: "workspace" },
   ) {
     this.connection = createWorkspaceDb(workspacePath);
   }
 
-  async getThreadId(): Promise<string | null> {
+  async getThread(): Promise<{ id: string; toolContractVersion?: string } | null> {
     await this.initialize();
     const [row] = await this.connection.db
+      .select()
+      .from(schema.assistantThreadScopes)
+      .where(
+        and(
+          eq(schema.assistantThreadScopes.workspaceId, this.workspaceId),
+          eq(schema.assistantThreadScopes.scopeKind, this.scope.kind),
+          eq(schema.assistantThreadScopes.scopeKey, scopeKey(this.scope)),
+        ),
+      )
+      .limit(1);
+    if (row) {
+      return {
+        id: row.codexThreadId,
+        ...(row.toolContractVersion
+          ? { toolContractVersion: row.toolContractVersion }
+          : {}),
+      };
+    }
+    if (this.scope.kind !== "workspace") return null;
+    const [legacy] = await this.connection.db
       .select()
       .from(schema.assistantThreads)
       .where(eq(schema.assistantThreads.workspaceId, this.workspaceId))
       .limit(1);
-    return row?.codexThreadId ?? null;
+    if (!legacy) return null;
+    await this.saveThread(legacy.codexThreadId);
+    return { id: legacy.codexThreadId };
   }
 
-  async saveThread(codexThreadId: string): Promise<void> {
+  async saveThread(
+    codexThreadId: string,
+    toolContractVersion?: string,
+  ): Promise<void> {
     await this.initialize();
     const now = new Date().toISOString();
     await this.connection.db
-      .insert(schema.assistantThreads)
+      .insert(schema.assistantThreadScopes)
       .values({
-        id: this.workspaceId,
+        id: `${this.workspaceId}:${this.scope.kind}:${scopeKey(this.scope)}`,
         workspaceId: this.workspaceId,
+        scopeKind: this.scope.kind,
+        scopeKey: scopeKey(this.scope),
         codexThreadId,
+        toolContractVersion,
         createdAt: now,
         updatedAt: now,
       })
       .onConflictDoUpdate({
-        target: schema.assistantThreads.workspaceId,
-        set: { codexThreadId, updatedAt: now },
+        target: [
+          schema.assistantThreadScopes.workspaceId,
+          schema.assistantThreadScopes.scopeKind,
+          schema.assistantThreadScopes.scopeKey,
+        ],
+        set: { codexThreadId, toolContractVersion, updatedAt: now },
       });
   }
 
   async clearThread(): Promise<void> {
     await this.initialize();
     await this.connection.db
-      .delete(schema.assistantThreads)
-      .where(eq(schema.assistantThreads.workspaceId, this.workspaceId));
+      .delete(schema.assistantThreadScopes)
+      .where(
+        and(
+          eq(schema.assistantThreadScopes.workspaceId, this.workspaceId),
+          eq(schema.assistantThreadScopes.scopeKind, this.scope.kind),
+          eq(schema.assistantThreadScopes.scopeKey, scopeKey(this.scope)),
+        ),
+      );
   }
 
   async createRun(run: AssistantRun): Promise<void> {
@@ -70,6 +110,8 @@ export class AssistantRepository {
     await this.connection.db.insert(schema.assistantRuns).values({
       id: run.id,
       workspaceId: run.workspaceId,
+      scopeKind: run.scope.kind,
+      scopeKey: scopeKey(run.scope),
       threadId: run.threadId,
       codexTurnId: run.turnId,
       status: run.status,
@@ -133,6 +175,8 @@ export class AssistantRepository {
       .values({
         runId,
         workspaceId: this.workspaceId,
+        scopeKind: this.scope.kind,
+        scopeKey: scopeKey(this.scope),
         eventType: event.type,
         eventJson: JSON.stringify(event),
         createdAt,
@@ -165,6 +209,8 @@ export class AssistantRepository {
       .where(
         and(
           eq(schema.assistantEvents.workspaceId, this.workspaceId),
+          eq(schema.assistantEvents.scopeKind, this.scope.kind),
+          eq(schema.assistantEvents.scopeKey, scopeKey(this.scope)),
           gt(schema.assistantEvents.sequence, afterSequence),
         ),
       )
@@ -184,13 +230,20 @@ export class AssistantRepository {
     const runRows = await this.connection.db
       .select()
       .from(schema.assistantRuns)
-      .where(eq(schema.assistantRuns.workspaceId, this.workspaceId))
+      .where(
+        and(
+          eq(schema.assistantRuns.workspaceId, this.workspaceId),
+          eq(schema.assistantRuns.scopeKind, this.scope.kind),
+          eq(schema.assistantRuns.scopeKey, scopeKey(this.scope)),
+        ),
+      )
       .orderBy(desc(schema.assistantRuns.createdAt))
       .limit(20);
     const recentRuns = runRows.map((row) => parseRun(row.snapshotJson));
     const events = await this.listEvents();
     return {
       workspaceId: this.workspaceId,
+      scope: this.scope,
       activeRun:
         recentRuns.find((run) => ACTIVE_STATUSES.includes(run.status)) ?? null,
       recentRuns,
@@ -200,8 +253,8 @@ export class AssistantRepository {
   }
 
   private initialize(): Promise<void> {
-    this.initialized ??= this.connection.client
-      .batch(
+    this.initialized ??= (async () => {
+      await this.connection.client.batch(
         [
           `CREATE TABLE IF NOT EXISTS assistant_threads (
           id TEXT PRIMARY KEY NOT NULL,
@@ -210,6 +263,18 @@ export class AssistantRepository {
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         )`,
+          `CREATE TABLE IF NOT EXISTS assistant_thread_scopes (
+          id TEXT PRIMARY KEY NOT NULL,
+          workspace_id TEXT NOT NULL,
+          scope_kind TEXT NOT NULL,
+          scope_key TEXT NOT NULL,
+          codex_thread_id TEXT NOT NULL,
+          tool_contract_version TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+          `CREATE UNIQUE INDEX IF NOT EXISTS assistant_thread_scopes_scope_idx
+          ON assistant_thread_scopes (workspace_id, scope_kind, scope_key)`,
           `CREATE TABLE IF NOT EXISTS assistant_runs (
           id TEXT PRIMARY KEY NOT NULL,
           workspace_id TEXT NOT NULL,
@@ -237,12 +302,65 @@ export class AssistantRepository {
           ON assistant_events (run_id, sequence)`,
         ],
         "write",
-      )
-      .then(() => undefined);
+      );
+      await addColumnIfMissing(
+        this.connection.client,
+        "assistant_runs",
+        "scope_kind",
+        "TEXT NOT NULL DEFAULT 'workspace'",
+      );
+      await addColumnIfMissing(
+        this.connection.client,
+        "assistant_runs",
+        "scope_key",
+        "TEXT NOT NULL DEFAULT ''",
+      );
+      await addColumnIfMissing(
+        this.connection.client,
+        "assistant_events",
+        "scope_kind",
+        "TEXT NOT NULL DEFAULT 'workspace'",
+      );
+      await addColumnIfMissing(
+        this.connection.client,
+        "assistant_events",
+        "scope_key",
+        "TEXT NOT NULL DEFAULT ''",
+      );
+      await this.connection.client.batch(
+        [
+          `CREATE INDEX IF NOT EXISTS assistant_runs_scope_idx
+          ON assistant_runs (workspace_id, scope_kind, scope_key, created_at)`,
+          `CREATE INDEX IF NOT EXISTS assistant_events_scope_idx
+          ON assistant_events (workspace_id, scope_kind, scope_key, sequence)`,
+        ],
+        "write",
+      );
+    })();
     return this.initialized;
   }
 }
 
+export function scopeKey(scope: AssistantScope): string {
+  return scope.kind === "document" ? scope.path : "";
+}
+
+async function addColumnIfMissing(
+  client: { execute: (statement: string) => Promise<unknown> },
+  table: string,
+  column: string,
+  definition: string,
+): Promise<void> {
+  try {
+    await client.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  } catch (error) {
+    if (!(error instanceof Error) || !/duplicate column/i.test(error.message)) {
+      throw error;
+    }
+  }
+}
+
 function parseRun(value: string): AssistantRun {
-  return JSON.parse(value) as AssistantRun;
+  const run = JSON.parse(value) as AssistantRun;
+  return { ...run, scope: run.scope ?? { kind: "workspace" } };
 }

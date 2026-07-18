@@ -7,6 +7,7 @@ import {
 } from "./assistant-agui-projector";
 import {
   assistantInteractionResponseSchema,
+  documentToolResponseSchema,
   loginIdSchema,
   startAssistantRunSchema,
 } from "./assistant.schemas";
@@ -17,7 +18,7 @@ import {
   AssistantUnavailableError,
   assistantService,
 } from "./assistant.service";
-import type { SequencedAssistantEvent } from "./assistant.types";
+import type { AssistantScope, SequencedAssistantEvent } from "./assistant.types";
 import { WorkspaceNotFoundError } from "../workspace/workspace.service";
 
 export function createAssistantRoutes(service: AssistantService): Hono {
@@ -49,7 +50,12 @@ export function createAssistantRoutes(service: AssistantService): Hono {
 
   assistantRoutes.get("/workspaces/:workspaceId/assistant", async (c) => {
     try {
-      return c.json(await service.getSnapshot(c.req.param("workspaceId")));
+      return c.json(
+        await service.getSnapshot(
+          c.req.param("workspaceId"),
+          scopeFromQuery(c.req.query("scope"), c.req.query("path")),
+        ),
+      );
     } catch (error) {
       return mapAssistantError(c, error);
     }
@@ -59,6 +65,7 @@ export function createAssistantRoutes(service: AssistantService): Hono {
     "/workspaces/:workspaceId/assistant/events",
     async (c) => {
       const workspaceId = c.req.param("workspaceId");
+      const scope = scopeFromQuery(c.req.query("scope"), c.req.query("path"));
       const afterSequence = Math.max(
         parseEventId(c.req.header("Last-Event-ID")),
         parseEventId(c.req.query("after")),
@@ -87,10 +94,10 @@ export function createAssistantRoutes(service: AssistantService): Hono {
           });
         };
 
-        const unsubscribe = service.subscribe(workspaceId, enqueue);
+        const unsubscribe = service.subscribe(workspaceId, enqueue, scope);
         try {
-          const snapshot = await service.getSnapshot(workspaceId);
-          const replay = await service.getEvents(workspaceId, afterSequence);
+          const snapshot = await service.getSnapshot(workspaceId, scope);
+          const replay = await service.getEvents(workspaceId, afterSequence, scope);
           if (
             afterSequence > 0 &&
             replay.length > 0 &&
@@ -161,6 +168,7 @@ export function createAssistantRoutes(service: AssistantService): Hono {
             ...(input.data.preferences
               ? { preferences: input.data.preferences }
               : {}),
+            ...(input.data.scope ? { scope: input.data.scope } : {}),
           },
         ),
         201,
@@ -177,6 +185,41 @@ export function createAssistantRoutes(service: AssistantService): Hono {
         await service.interruptRun(
           c.req.param("workspaceId"),
           c.req.param("runId"),
+        );
+        return c.json({ ok: true });
+      } catch (error) {
+        return mapAssistantError(c, error);
+      }
+    },
+  );
+
+  assistantRoutes.post(
+    "/workspaces/:workspaceId/assistant/tool-calls/:callId/claim",
+    async (c) => {
+      try {
+        await service.claimDocumentTool(
+          c.req.param("workspaceId"),
+          c.req.param("callId"),
+        );
+        return c.json({ ok: true });
+      } catch (error) {
+        return mapAssistantError(c, error);
+      }
+    },
+  );
+
+  assistantRoutes.post(
+    "/workspaces/:workspaceId/assistant/tool-calls/:callId/respond",
+    async (c) => {
+      const input = documentToolResponseSchema.safeParse(await readJson(c.req.raw));
+      if (!input.success) {
+        return c.json({ error: input.error.issues[0]?.message ?? "Invalid document action result." }, 400);
+      }
+      try {
+        await service.respondToDocumentTool(
+          c.req.param("workspaceId"),
+          c.req.param("callId"),
+          input.data,
         );
         return c.json({ ok: true });
       } catch (error) {
@@ -211,6 +254,14 @@ export function createAssistantRoutes(service: AssistantService): Hono {
   );
 
   return assistantRoutes;
+}
+
+function scopeFromQuery(scope?: string, path?: string): AssistantScope {
+  if (!scope || scope === "workspace") return { kind: "workspace" };
+  if (scope === "document" && path && !path.startsWith("/") && !path.split("/").includes("..")) {
+    return { kind: "document", path };
+  }
+  throw new AssistantConflictError("That assistant scope is not valid.");
 }
 
 export const assistantRoutes = createAssistantRoutes(assistantService);

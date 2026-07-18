@@ -8,6 +8,7 @@ const run: AssistantRun = {
   workspaceId: "workspace-1",
   threadId: "thread-1",
   status: "running",
+  scope: { kind: "workspace" },
   userText: "Create a brief",
   createdAt: "2026-07-18T00:00:00.000Z",
 };

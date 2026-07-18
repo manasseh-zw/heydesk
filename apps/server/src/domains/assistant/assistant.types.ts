@@ -21,17 +21,20 @@ export type AssistantRun = {
   turnId?: string;
   status: AssistantRunStatus;
   userText: string;
+  scope: AssistantScope;
   context?: AssistantRunContext;
   preferences?: AssistantRunPreferences;
   createdAt: string;
   completedAt?: string;
 };
 
-export type AssistantRunContext = {
-  kind: "page";
-  path: string;
-  expectedRevision: string;
-};
+export type AssistantScope =
+  | { kind: "workspace" }
+  | { kind: "document"; path: string };
+
+export type AssistantRunContext =
+  | { kind: "page"; path: string; expectedRevision: string }
+  | { kind: "document"; path: string; expectedRevision: string };
 
 export type AssistantRunPreferences = {
   model: string;
@@ -103,6 +106,14 @@ export type AssistantArtifact = {
   kind: "page" | "document";
 };
 
+export type AssistantDocumentToolCall = {
+  callId: string;
+  runId: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+  expiresAt: string;
+};
+
 export type AssistantError = {
   code: string;
   message: string;
@@ -126,6 +137,8 @@ export type AssistantEvent =
   | { type: "draft.diff.updated"; files: AssistantFileChange[] }
   | { type: "interaction.requested"; interaction: AssistantInteraction }
   | { type: "interaction.resolved"; interactionId: string }
+  | { type: "document-tool.requested"; call: AssistantDocumentToolCall }
+  | { type: "document-tool.resolved"; callId: string }
   | { type: "artifact.committed"; artifact: AssistantArtifact }
   | { type: "run.completed"; run: AssistantRun }
   | { type: "run.failed"; runId: string; error: AssistantError };
@@ -140,6 +153,7 @@ export type SequencedAssistantEvent = {
 
 export type AssistantSnapshot = {
   workspaceId: string;
+  scope: AssistantScope;
   activeRun: AssistantRun | null;
   recentRuns: AssistantRun[];
   events: SequencedAssistantEvent[];

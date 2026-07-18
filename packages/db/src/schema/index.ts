@@ -20,11 +20,34 @@ export const assistantThreads = sqliteTable(
   ],
 );
 
+export const assistantThreadScopes = sqliteTable(
+  "assistant_thread_scopes",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    scopeKind: text("scope_kind").notNull(),
+    scopeKey: text("scope_key").notNull(),
+    codexThreadId: text("codex_thread_id").notNull(),
+    toolContractVersion: text("tool_contract_version"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("assistant_thread_scopes_scope_idx").on(
+      table.workspaceId,
+      table.scopeKind,
+      table.scopeKey,
+    ),
+  ],
+);
+
 export const assistantRuns = sqliteTable(
   "assistant_runs",
   {
     id: text("id").primaryKey(),
     workspaceId: text("workspace_id").notNull(),
+    scopeKind: text("scope_kind").notNull().default("workspace"),
+    scopeKey: text("scope_key").notNull().default(""),
     threadId: text("thread_id").notNull(),
     codexTurnId: text("codex_turn_id"),
     status: text("status").notNull(),
@@ -49,6 +72,8 @@ export const assistantEvents = sqliteTable(
     sequence: integer("sequence").primaryKey({ autoIncrement: true }),
     runId: text("run_id").notNull(),
     workspaceId: text("workspace_id").notNull(),
+    scopeKind: text("scope_kind").notNull().default("workspace"),
+    scopeKey: text("scope_key").notNull().default(""),
     eventType: text("event_type").notNull(),
     eventJson: text("event_json").notNull(),
     createdAt: text("created_at").notNull(),
