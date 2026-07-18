@@ -402,6 +402,57 @@ completion, and persistence assertions. Those are deterministic test
 conditions rather than model-quality scores. Evalite can later call the same
 assistant boundary when Heydesk has a representative prompt corpus.
 
+### ADR-018 — Keep page files authoritative and split durable chat from quick edits
+
+**Decision:** Markdown and MDX files remain the durable page-content authority.
+Every read exposes a SHA-256 revision of the exact UTF-8 bytes and every user or
+quick-edit write must name the revision it replaces. The server writes an
+adjacent temporary file and atomically renames it into place. A stale write is
+returned as an explicit conflict with the current disk version; it is never
+merged or overwritten silently.
+
+Supported Markdown is edited through Tiptap and serialized back to Markdown.
+MDX and Markdown containing constructs that the current extension set cannot
+round-trip losslessly use the monospaced source editor instead. This source
+fallback is deliberate: preserving JSX, comments, expressions, frontmatter,
+and unsupported structures matters more than presenting every page as rich
+text. Each newly supported Markdown construct needs a round-trip fixture before
+it can leave source mode.
+
+The workspace assistant remains one durable Codex thread and one shared browser
+session across Home and the page rail. A page send adds a server-built context
+envelope and revision, while preserving the user's actual message as the chat
+record. Selection rewrites are a different product operation: they run in an
+ephemeral, read-only Luna thread at low effort, return one structured
+replacement, and require Apply or Discard before a revision-checked write.
+They do not become assistant runs or conversation events.
+
+**Deferred:** Yjs/Hocuspocus, per-page conversation threads, rich arbitrary
+MDX, direct collaborative editing, and the visible model selector remain out of
+this slice. The filesystem and server are the only commit authority; streamed
+Codex diffs are temporary editor state until a verified artifact commit or final
+disk reconciliation.
+
+### ADR-019 — Separate pages from assistant artifacts
+
+**Decision:** Markdown and MDX filesystem content belongs to the `page` domain
+on both the server and client. The workspace owns navigation and the selected
+page, while the page feature owns reads, revision-aware saves, rich/source
+editing, conflicts, and quick edits. The assistant owns the page-scoped rail
+and conversation previews.
+
+`Artifact` remains an assistant result concept: it identifies a durable output
+that should appear in conversation and can later refer to a page, document, or
+other supported result. It is not the primary CRUD model for every kind of
+workspace content. Word documents will receive their own domain rather than
+being represented as a synthetic kind in the Markdown page service.
+
+**Why:** The initial vertical slice used `artifact` for both a Codex-produced
+result and the underlying Markdown file. That accelerated the first complete
+loop but blurred the product distinction between workspaces, pages, future Word
+documents, and conversation artifacts. Correcting the boundary before document
+editing avoids carrying that ambiguity into the next vertical slice.
+
 ## Challenges and what they taught us
 
 ### Protocol shape is part of the product
