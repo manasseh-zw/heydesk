@@ -32,6 +32,10 @@ export default defineConfig({
     },
   },
   renderer: {
+    // electron-vite resolves environment files from the desktop package by
+    // default even though this renderer's source root is apps/web. Keep the
+    // browser renderer's validated VITE_* contract as the single source.
+    envDir: webRoot,
     root: webRoot,
     resolve: {
       tsconfigPaths: true,
