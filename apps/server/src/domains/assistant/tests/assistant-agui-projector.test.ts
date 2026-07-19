@@ -45,6 +45,28 @@ describe("assistant AG-UI projector", () => {
     ]);
   });
 
+  it("projects a Codex-created document handoff", () => {
+    expect(
+      projectAssistantEvent({
+        type: "document.created",
+        handoff: {
+          sourceRunId: "run-home",
+          path: "documents/Microplastics.docx",
+          name: "Microplastics",
+          revision: "a".repeat(64),
+        },
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        type: "CUSTOM",
+        name: "heydesk:document-created",
+        value: expect.objectContaining({
+          path: "documents/Microplastics.docx",
+        }),
+      }),
+    ]);
+  });
+
   it("projects tool calls without losing their Heydesk kind", () => {
     const events = projectAssistantEvent({
       type: "activity.started",
@@ -65,5 +87,29 @@ describe("assistant AG-UI projector", () => {
       }),
       expect.objectContaining({ type: "TOOL_CALL_ARGS", toolCallId: "tool-1" }),
     ]);
+  });
+
+  it("projects the concrete dynamic document tool name", () => {
+    const [started] = projectAssistantEvent({
+      type: "activity.started",
+      activity: {
+        id: "tool-2",
+        runId: run.id,
+        kind: "dynamic-tool",
+        title: "append_paragraphs",
+        status: "running",
+        input: {
+          type: "dynamicToolCall",
+          namespace: "document",
+          tool: "append_paragraphs",
+          arguments: { paragraphs: [] },
+        },
+      },
+    });
+
+    expect(started).toMatchObject({
+      type: "TOOL_CALL_START",
+      toolName: "heydesk.document.append_paragraphs",
+    });
   });
 });

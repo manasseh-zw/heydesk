@@ -21,6 +21,14 @@ export const startAssistantRunSchema = z.object({
     .discriminatedUnion("kind", [
       z.object({ kind: z.literal("workspace") }),
       z.object({
+        kind: z.literal("home"),
+        sessionId: z.string().uuid(),
+      }),
+      z.object({
+        kind: z.literal("page"),
+        path: z.string().trim().min(1).max(2_000),
+      }),
+      z.object({
         kind: z.literal("document"),
         path: z.string().trim().min(1).max(2_000),
       }),

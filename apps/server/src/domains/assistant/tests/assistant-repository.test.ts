@@ -95,6 +95,35 @@ describe("assistant repository", () => {
       events: [{ event: { text: "Second history" } }],
     });
   });
+
+  it("isolates page threads and fresh Home sessions", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "heydesk-repository-"));
+    await mkdir(join(workspace, ".heydesk"));
+    const page = new AssistantRepository("workspace-1", workspace, {
+      kind: "page",
+      path: "pages/Notes.md",
+    });
+    const firstHome = new AssistantRepository("workspace-1", workspace, {
+      kind: "home",
+      sessionId: "019c88e4-8b7d-758f-81fd-6cc47c1d90b9",
+    });
+    const secondHome = new AssistantRepository("workspace-1", workspace, {
+      kind: "home",
+      sessionId: "019c88e4-8b7d-758f-81fd-6cc47c1d90ba",
+    });
+
+    await page.saveThread("thread-page");
+    await firstHome.saveThread("thread-home-first");
+    await secondHome.saveThread("thread-home-second");
+
+    await expect(page.getThread()).resolves.toEqual({ id: "thread-page" });
+    await expect(firstHome.getThread()).resolves.toEqual({
+      id: "thread-home-first",
+    });
+    await expect(secondHome.getThread()).resolves.toEqual({
+      id: "thread-home-second",
+    });
+  });
 });
 
 function completedDocumentRun(

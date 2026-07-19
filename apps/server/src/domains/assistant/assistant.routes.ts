@@ -53,7 +53,11 @@ export function createAssistantRoutes(service: AssistantService): Hono {
       return c.json(
         await service.getSnapshot(
           c.req.param("workspaceId"),
-          scopeFromQuery(c.req.query("scope"), c.req.query("path")),
+          scopeFromQuery(
+            c.req.query("scope"),
+            c.req.query("path"),
+            c.req.query("sessionId"),
+          ),
         ),
       );
     } catch (error) {
@@ -65,7 +69,11 @@ export function createAssistantRoutes(service: AssistantService): Hono {
     "/workspaces/:workspaceId/assistant/events",
     async (c) => {
       const workspaceId = c.req.param("workspaceId");
-      const scope = scopeFromQuery(c.req.query("scope"), c.req.query("path"));
+      const scope = scopeFromQuery(
+        c.req.query("scope"),
+        c.req.query("path"),
+        c.req.query("sessionId"),
+      );
       const afterSequence = Math.max(
         parseEventId(c.req.header("Last-Event-ID")),
         parseEventId(c.req.query("after")),
@@ -256,12 +264,30 @@ export function createAssistantRoutes(service: AssistantService): Hono {
   return assistantRoutes;
 }
 
-function scopeFromQuery(scope?: string, path?: string): AssistantScope {
+function scopeFromQuery(
+  scope?: string,
+  path?: string,
+  sessionId?: string,
+): AssistantScope {
   if (!scope || scope === "workspace") return { kind: "workspace" };
-  if (scope === "document" && path && !path.startsWith("/") && !path.split("/").includes("..")) {
-    return { kind: "document", path };
+  if (scope === "home" && sessionId && isUuid(sessionId)) {
+    return { kind: "home", sessionId };
+  }
+  if (
+    (scope === "page" || scope === "document") &&
+    path &&
+    !path.startsWith("/") &&
+    !path.split("/").includes("..")
+  ) {
+    return scope === "page" ? { kind: "page", path } : { kind: "document", path };
   }
   throw new AssistantConflictError("That assistant scope is not valid.");
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
 }
 
 export const assistantRoutes = createAssistantRoutes(assistantService);

@@ -1,4 +1,5 @@
 import type { MessagePart } from "@tanstack/ai";
+import { useEffect, useRef, useState } from "react";
 import {
   FilePenLineIcon,
   FolderSearch2Icon,
@@ -22,19 +23,27 @@ import {
   AgentRunHeader,
   AgentRunMeta,
   AgentRunStep,
+  AgentRunText,
   AgentRunTitle,
 } from "@/components/ai/agent-run";
 import { Chip } from "@/components/ai/chip";
+import { Markdown } from "@/components/ai/markdown";
 import { Status } from "@/components/ai/status";
+import {
+  parseActivityArguments,
+  presentAssistantActivity,
+} from "../assistant-activity-presentation";
 import { RenderAssistantPart } from "./render-assistant-part";
 
 type RenderAssistantMessageProps = {
+  activityProgress?: Record<string, string>;
   isStreaming?: boolean;
   outgoing?: boolean;
   parts: MessagePart[];
 };
 
 export function RenderAssistantMessage({
+  activityProgress = {},
   isStreaming = false,
   outgoing = false,
   parts,
@@ -45,145 +54,247 @@ export function RenderAssistantMessage({
     ));
   }
 
-  const actionParts = parts.filter(isActionPart);
-  let renderedAgentRun = false;
-
-  return parts.map((part, index) => {
-    if (isActionPart(part)) {
-      if (renderedAgentRun) return null;
-      renderedAgentRun = true;
-      return <AssistantAgentRun key="agent-run" parts={actionParts} />;
-    }
-    return (
+  if (!parts.some((part) => part.type === "tool-call")) {
+    return parts.map((part, index) => (
       <RenderAssistantPart
         isStreaming={isStreaming && index === parts.length - 1}
         key={index}
         part={part}
       />
-    );
-  });
+    ));
+  }
+
+  return (
+    <AssistantAgentRun
+      activityProgress={activityProgress}
+      isStreaming={isStreaming}
+      parts={parts}
+    />
+  );
 }
 
-type ActionPart = Extract<MessagePart, { type: "tool-call" | "tool-result" }>;
+type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
+type ToolResultPart = Extract<MessagePart, { type: "tool-result" }>;
 
-function AssistantAgentRun({ parts }: { parts: ActionPart[] }) {
+function AssistantAgentRun({
+  activityProgress,
+  isStreaming,
+  parts,
+}: {
+  activityProgress: Record<string, string>;
+  isStreaming: boolean;
+  parts: MessagePart[];
+}) {
   const calls = parts.filter(
-    (part): part is Extract<MessagePart, { type: "tool-call" }> =>
-      part.type === "tool-call",
+    (part): part is ToolCallPart => part.type === "tool-call",
   );
   const results = new Map(
     parts
-      .filter(
-        (part): part is Extract<MessagePart, { type: "tool-result" }> =>
-          part.type === "tool-result",
-      )
+      .filter((part): part is ToolResultPart => part.type === "tool-result")
       .map((part) => [part.toolCallId, part]),
   );
   const failed =
     calls.some((part) => part.state === "error") ||
     [...results.values()].some((part) => part.state === "error");
-  const running = calls.some(
+  const hasPendingCall = calls.some(
     (part) =>
       part.state !== "complete" &&
       part.state !== "error" &&
       part.state !== "approval-requested",
   );
+  const running = !failed && (isStreaming || hasPendingCall);
   const state = failed ? "failed" : running ? "running" : "completed";
+  const visibleSteps = parts.filter(isVisibleRunStep);
+  const elapsed = useElapsedSeconds(running);
+  const title = agentRunTitle(calls, state);
 
   return (
-    <AgentRun defaultOpen={running} state={state}>
+    <AgentRun defaultOpen state={state}>
       <AgentRunHeader>
-        <AgentRunTitle>Workspace activity</AgentRunTitle>
+        <AgentRunTitle>{title}</AgentRunTitle>
+        <Status
+          pulse={running}
+          size="sm"
+          state={failed ? "error" : running ? "inflight" : "active"}
+        >
+          {failed ? "Failed" : running ? "Running" : "Completed"}
+        </Status>
         <AgentRunMeta>
-          <span>
-            {calls.length} {calls.length === 1 ? "action" : "actions"}
+          <span className="tabular-nums">
+            {visibleSteps.length} {visibleSteps.length === 1 ? "step" : "steps"}
           </span>
-          <Status
-            pulse={running}
-            size="sm"
-            state={failed ? "error" : running ? "inflight" : "active"}
-          >
-            {failed ? "Failed" : running ? "Working" : "Completed"}
-          </Status>
+          {elapsed !== null && (
+            <>
+              <span>·</span>
+              <span className="tabular-nums">{elapsed.toFixed(1)}s</span>
+            </>
+          )}
         </AgentRunMeta>
       </AgentRunHeader>
       <AgentRunContent>
-        {calls.map((call) => (
-          <AgentRunStep key={call.id}>
-            <Action>
-              <ActionTrigger>
-                <ActionIcon>{toolIcon(call.name, failed)}</ActionIcon>
-                <ActionLabel>{friendlyToolName(call.name)}</ActionLabel>
-                {extractTarget(call.arguments) && (
-                  <Chip size="sm">{extractTarget(call.arguments)}</Chip>
-                )}
-              </ActionTrigger>
-              <ActionContent>
-                <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-elevated p-3 font-mono text-xs">
-                  {formatActionDetails(call.arguments, results.get(call.id))}
-                </pre>
-              </ActionContent>
-            </Action>
-          </AgentRunStep>
-        ))}
+        {parts.map((part, index) => {
+          if (part.type === "tool-result") return null;
+          if (part.type === "text" && part.content) {
+            return (
+              <AgentRunStep key={`text-${index}`}>
+                <AgentRunText>
+                  <Markdown>{part.content}</Markdown>
+                </AgentRunText>
+              </AgentRunStep>
+            );
+          }
+          if (part.type === "thinking" && part.content) {
+            return (
+              <AgentRunStep key={`thinking-${index}`}>
+                <RenderAssistantPart
+                  isStreaming={isStreaming && index === parts.length - 1}
+                  part={part}
+                />
+              </AgentRunStep>
+            );
+          }
+          if (part.type !== "tool-call") return null;
+          return (
+            <AgentRunStep key={part.id}>
+              <AgentAction
+                call={part}
+                progress={activityProgress[part.id]}
+                result={results.get(part.id)}
+              />
+            </AgentRunStep>
+          );
+        })}
       </AgentRunContent>
     </AgentRun>
   );
 }
 
-function isActionPart(part: MessagePart): part is ActionPart {
-  return part.type === "tool-call" || part.type === "tool-result";
+function AgentAction({
+  call,
+  progress,
+  result,
+}: {
+  call: ToolCallPart;
+  progress?: string;
+  result?: ToolResultPart;
+}) {
+  const failed = call.state === "error" || result?.state === "error";
+  const presentation = presentAssistantActivity(call.name, call.arguments);
+  return (
+    <Action defaultOpen={false}>
+      <ActionTrigger>
+        <ActionIcon>{toolIcon(call.name, failed)}</ActionIcon>
+        <ActionLabel>{presentation.label}</ActionLabel>
+        {presentation.target && <Chip size="sm">{presentation.target}</Chip>}
+      </ActionTrigger>
+      <ActionContent>
+        {presentation.shellCommand ? (
+          <p className="text-xs">
+            {failed
+              ? result?.error ?? "This workspace action could not be completed."
+              : progress
+                ? "Codex reviewed the requested workspace context."
+                : "Workspace review completed."}
+          </p>
+        ) : (
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-elevated p-3 font-mono text-xs">
+            {formatActionDetails(call.arguments, result, progress)}
+          </pre>
+        )}
+      </ActionContent>
+    </Action>
+  );
 }
 
-function friendlyToolName(name: string): string {
-  return name
-    .replace(/^heydesk[.:]/, "")
-    .replaceAll("_", " ")
-    .replaceAll("-", " ")
-    .replace(/\b\w/g, (character) => character.toUpperCase());
+function isVisibleRunStep(part: MessagePart): boolean {
+  if (part.type === "tool-call") return true;
+  if (part.type === "text" || part.type === "thinking") return Boolean(part.content);
+  return false;
+}
+
+function useElapsedSeconds(running: boolean): number | null {
+  const startedAtRef = useRef<number | null>(null);
+  const [elapsed, setElapsed] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!running) {
+      if (startedAtRef.current !== null) {
+        setElapsed((performance.now() - startedAtRef.current) / 1_000);
+      }
+      return;
+    }
+    if (startedAtRef.current === null) startedAtRef.current = performance.now();
+    const update = () => {
+      if (startedAtRef.current !== null) {
+        setElapsed((performance.now() - startedAtRef.current) / 1_000);
+      }
+    };
+    update();
+    const interval = window.setInterval(update, 100);
+    return () => window.clearInterval(interval);
+  }, [running]);
+
+  return elapsed;
+}
+
+function agentRunTitle(
+  calls: ToolCallPart[],
+  state: "running" | "completed" | "failed",
+): string {
+  const names = calls.map((call) => call.name.toLowerCase());
+  const documentEdit = names.some((name) =>
+    ["suggest_change", "apply_formatting", "set_paragraph_style", "append_paragraphs"].some(
+      (tool) => name.includes(tool),
+    ),
+  );
+  const documentRead = names.some(
+    (name) => name.includes("document") || name.includes("find_text"),
+  );
+  if (state === "failed") return "Document work failed";
+  if (documentEdit) return state === "running" ? "Editing document" : "Edited document";
+  if (documentRead) return state === "running" ? "Reviewing document" : "Reviewed document";
+  return state === "running" ? "Working in workspace" : "Completed workspace work";
 }
 
 function toolIcon(name: string, failed: boolean) {
   if (failed) return <XCircleIcon />;
   const normalized = name.toLowerCase();
-  if (normalized.includes("file") || normalized.includes("patch"))
+  if (
+    normalized.includes("change") ||
+    normalized.includes("format") ||
+    normalized.includes("style") ||
+    normalized.includes("append") ||
+    normalized.includes("file") ||
+    normalized.includes("patch")
+  )
     return <FilePenLineIcon />;
   if (normalized.includes("search") && normalized.includes("web"))
     return <GlobeIcon />;
-  if (normalized.includes("search") || normalized.includes("read"))
+  if (
+    normalized.includes("search") ||
+    normalized.includes("find") ||
+    normalized.includes("read")
+  )
     return <FolderSearch2Icon />;
   if (normalized.includes("command") || normalized.includes("exec"))
     return <TerminalIcon />;
   if (normalized.includes("mcp")) return <PlugIcon />;
-  return failed ? <XCircleIcon /> : <WrenchIcon />;
-}
-
-function extractTarget(argumentsValue: string): string | undefined {
-  try {
-    const value: unknown = JSON.parse(argumentsValue);
-    if (!value || typeof value !== "object") return undefined;
-    const record = value as Record<string, unknown>;
-    for (const key of ["path", "file", "target", "command", "query"]) {
-      if (typeof record[key] === "string") return truncate(record[key], 48);
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
+  return <WrenchIcon />;
 }
 
 function formatActionDetails(
   argumentsValue: string,
-  result?: Extract<MessagePart, { type: "tool-result" }>,
+  result?: ToolResultPart,
+  progress?: string,
 ): string {
   const sections: string[] = [];
-  if (argumentsValue) {
-    try {
-      sections.push(JSON.stringify(JSON.parse(argumentsValue), null, 2));
-    } catch {
-      sections.push(argumentsValue);
-    }
+  const argumentsRecord = parseActivityArguments(argumentsValue);
+  if (Object.keys(argumentsRecord).length > 0) {
+    sections.push(JSON.stringify(argumentsRecord, null, 2));
+  } else if (argumentsValue) {
+    sections.push(argumentsValue);
   }
+  if (progress) sections.push(progress);
   if (result) {
     const content =
       typeof result.content === "string"
@@ -192,8 +303,4 @@ function formatActionDetails(
     sections.push(result.error ?? content);
   }
   return sections.join("\n\n") || "No additional details.";
-}
-
-function truncate(value: string, length: number): string {
-  return value.length > length ? `${value.slice(0, length - 1)}…` : value;
 }

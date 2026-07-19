@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 
 import { env } from "@heydesk/env/server";
 import { getToolSchemas } from "@eigenpal/docx-editor-agents/server";
@@ -8,6 +8,7 @@ import { z } from "zod";
 import { PageService } from "../page/page.service";
 import { DocumentService } from "../document/document.service";
 import { workspaceService } from "../workspace/workspace.service";
+import { workspacePagesDirectory } from "../workspace/workspace.paths";
 import type { WorkspaceService } from "../workspace/workspace.service";
 import type { WorkspaceSummary } from "../workspace/workspace.types";
 import {
@@ -34,6 +35,7 @@ import { canAutoAcceptFileChanges } from "./assistant-safety";
 import type {
   AssistantActivity,
   AssistantDocumentToolCall,
+  AssistantDocumentHandoff,
   AssistantEvent,
   AssistantFileChange,
   AssistantInteraction,
@@ -51,6 +53,8 @@ const INTERACTION_TIMEOUT_MS = 5 * 60_000;
 const MODEL_CACHE_MS = 30_000;
 const DOCUMENT_TOOL_TIMEOUT_MS = 60_000;
 const DOCUMENT_TOOL_CONTRACT_VERSION = "document-tools-v3";
+const WORKSPACE_TOOL_CONTRACT_VERSION = "workspace-tools-v2";
+const WORKSPACE_CREATE_DOCUMENT_TOOL = "create_document";
 const DOCUMENT_TOOL_NAMES = new Set([
   "read_document",
   "read_selection",
@@ -322,6 +326,12 @@ type PendingDocumentTool = {
   timeout: NodeJS.Timeout;
 };
 
+type PendingDocumentHandoff = {
+  handoff: AssistantDocumentHandoff;
+  context: string;
+  preferences: AssistantRunPreferences;
+};
+
 export class AssistantService {
   private readonly repositories = new Map<string, AssistantRepository>();
   private readonly reconciledWorkspaces = new Set<string>();
@@ -330,6 +340,10 @@ export class AssistantService {
   private readonly listeners = new Map<string, Set<AssistantEventListener>>();
   private readonly pendingInteractions = new Map<string, PendingInteraction>();
   private readonly pendingDocumentTools = new Map<string, PendingDocumentTool>();
+  private readonly pendingDocumentHandoffs = new Map<
+    string,
+    PendingDocumentHandoff
+  >();
   private modelCache: { expiresAt: number; models: CodexModel[] } | null = null;
   private readonly pages: PageService;
   private readonly documents: DocumentService;
@@ -498,7 +512,22 @@ export class AssistantService {
       scope.kind === "document" &&
       (options.context?.kind !== "document" || options.context.path !== scope.path)
     ) {
-      throw new AssistantConflictError("The document run context does not match its assistant scope.");
+      throw new AssistantConflictError(
+        "The document run context does not match its assistant scope.",
+      );
+    }
+    if (
+      scope.kind === "page" &&
+      (options.context?.kind !== "page" || options.context.path !== scope.path)
+    ) {
+      throw new AssistantConflictError(
+        "The page run context does not match its assistant scope.",
+      );
+    }
+    if (scope.kind === "home" && options.context) {
+      throw new AssistantConflictError(
+        "A Home conversation cannot inherit page or document context.",
+      );
     }
     const { workspace, repository } =
       await this.getWorkspaceContext(workspaceId, scope);
@@ -550,7 +579,7 @@ export class AssistantService {
           input: [
             {
               type: "text",
-              text: buildCodexInput(userText, options.context),
+              text: buildCodexInput(userText, workspace, options.context),
               text_elements: [],
             },
           ],
@@ -561,7 +590,11 @@ export class AssistantService {
               ? { type: "readOnly" }
               : {
                   type: "workspaceWrite",
-                  writableRoots: [workspace.path],
+                  writableRoots: [
+                    scope.kind === "home" || scope.kind === "page"
+                      ? resolve(workspace.path, workspacePagesDirectory)
+                      : workspace.path,
+                  ],
                   networkAccess: false,
                   excludeTmpdirEnvVar: true,
                   excludeSlashTmp: true,
@@ -803,7 +836,11 @@ export class AssistantService {
     scope: AssistantScope,
   ): Promise<string> {
     const expectedContract =
-      scope.kind === "document" ? DOCUMENT_TOOL_CONTRACT_VERSION : undefined;
+      scope.kind === "document"
+        ? DOCUMENT_TOOL_CONTRACT_VERSION
+        : scope.kind === "home"
+          ? WORKSPACE_TOOL_CONTRACT_VERSION
+          : undefined;
     const existing = await repository.getThread();
     if (
       existing &&
@@ -840,11 +877,16 @@ export class AssistantService {
         developerInstructions:
           scope.kind === "document"
             ? buildDocumentDeveloperInstructions(scope.path)
-            : "Operate only inside the current Heydesk workspace. Create and update readable Markdown or MDX pages only inside pages/. Treat documents/ as user-owned Word content and .heydesk/ as private application state; do not modify either directly. Never use network access.",
+            : scope.kind === "page"
+              ? buildPageDeveloperInstructions(scope.path)
+              : buildWorkspaceDeveloperInstructions(),
         ...(scope.kind === "document"
           ? { dynamicTools: documentDynamicTools() }
-          : {}),
-        ephemeral: this.options.ephemeralThreads ?? false,
+          : scope.kind === "home"
+            ? { dynamicTools: workspaceDynamicTools() }
+            : {}),
+        ephemeral:
+          scope.kind === "home" || (this.options.ephemeralThreads ?? false),
       }),
     );
     assertSelectedModel(started.model);
@@ -1003,12 +1045,20 @@ export class AssistantService {
           true,
         );
       } else {
+        const documentHandoff =
+          status === "interrupted"
+            ? undefined
+            : this.pendingDocumentHandoffs.get(active.run.id);
+        this.pendingDocumentHandoffs.delete(active.run.id);
         active.run.status =
           status === "interrupted" ? "interrupted" : "completed";
         active.run.completedAt = new Date().toISOString();
         await active.repository.updateRun(active.run);
         await this.publish(active, { type: "run.completed", run: active.run });
         this.finishActive(active);
+        if (documentHandoff) {
+          await this.startDocumentHandoff(active, documentHandoff);
+        }
       }
       return;
     }
@@ -1035,7 +1085,14 @@ export class AssistantService {
     }
 
     if (responder.request.method === "item/tool/call") {
-      await this.requestDocumentTool(active, responder, params);
+      if (
+        active.run.scope.kind === "home" &&
+        stringValue(params.namespace) === "workspace"
+      ) {
+        await this.executeWorkspaceTool(active, responder, params);
+      } else {
+        await this.requestDocumentTool(active, responder, params);
+      }
       return;
     }
 
@@ -1050,6 +1107,14 @@ export class AssistantService {
         responder.resolve({ decision: "accept" });
         return;
       }
+    }
+
+    if (
+      active.run.scope.kind === "home" &&
+      isApprovalRequest(responder.request.method)
+    ) {
+      declineApprovalRequest(responder);
+      return;
     }
 
     const interaction = mapInteraction(
@@ -1228,6 +1293,135 @@ export class AssistantService {
     await this.publish(active, { type: "document-tool.requested", call });
   }
 
+  private async executeWorkspaceTool(
+    active: ActiveRun,
+    responder: CodexServerRequestResponder,
+    params: Record<string, unknown>,
+  ): Promise<void> {
+    const tool = stringValue(params.tool);
+    const parsed = createDocumentToolArgumentsSchema.safeParse(params.arguments);
+    if (this.pendingDocumentHandoffs.has(active.run.id)) {
+      responder.resolve({
+        contentItems: [
+          {
+            type: "inputText",
+            text: JSON.stringify({
+              success: false,
+              error:
+                "A document has already been created for this request. Finish the Home turn so Heydesk can open it.",
+            }),
+          },
+        ],
+        success: false,
+      });
+      return;
+    }
+    if (tool !== WORKSPACE_CREATE_DOCUMENT_TOOL || !parsed.success) {
+      responder.resolve({
+        contentItems: [
+          {
+            type: "inputText",
+            text: JSON.stringify({
+              success: false,
+              error:
+                tool === WORKSPACE_CREATE_DOCUMENT_TOOL
+                  ? (parsed.error?.issues[0]?.message ?? "Choose a valid document name.")
+                  : "That workspace action is not available.",
+            }),
+          },
+        ],
+        success: false,
+      });
+      return;
+    }
+
+    try {
+      const document = await this.documents.create(
+        active.workspace.id,
+        parsed.data.name,
+      );
+      const handoff: AssistantDocumentHandoff = {
+        sourceRunId: active.run.id,
+        path: document.path,
+        name: document.name,
+        revision: document.revision,
+      };
+      this.pendingDocumentHandoffs.set(active.run.id, {
+        handoff,
+        context: parsed.data.context,
+        preferences: active.run.preferences ?? {
+          model: env.CODEX_MODEL,
+          effort: "medium",
+        },
+      });
+      await this.publish(active, { type: "document.created", handoff });
+      responder.resolve({
+        contentItems: [
+          {
+            type: "inputText",
+            text: JSON.stringify({
+              success: true,
+              document: {
+                name: document.name,
+                path: document.path,
+                revision: document.revision,
+              },
+              next: "Finish this Home turn. Heydesk will open the document and continue from the handoff context with document tools.",
+            }),
+          },
+        ],
+        success: true,
+      });
+    } catch (error) {
+      responder.resolve({
+        contentItems: [
+          {
+            type: "inputText",
+            text: JSON.stringify({ success: false, error: toMessage(error) }),
+          },
+        ],
+        success: false,
+      });
+    }
+  }
+
+  private async startDocumentHandoff(
+    source: ActiveRun,
+    pending: PendingDocumentHandoff,
+  ): Promise<void> {
+    try {
+      const current = await this.documents.read(
+        source.workspace.id,
+        pending.handoff.path,
+      );
+      await this.startRun(
+        source.workspace.id,
+        randomUUID(),
+        pending.context,
+        {
+          scope: { kind: "document", path: pending.handoff.path },
+          context: {
+            kind: "document",
+            path: pending.handoff.path,
+            expectedRevision: current.revision,
+          },
+          preferences: pending.preferences,
+        },
+      );
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          source: "assistant-document-handoff",
+          level: "error",
+          workspaceId: source.workspace.id,
+          sourceRunId: source.run.id,
+          path: pending.handoff.path,
+          message: toMessage(error),
+        }),
+      );
+    }
+  }
+
   private async handleCodexExit(error: Error): Promise<void> {
     for (const pending of this.pendingDocumentTools.values()) {
       clearTimeout(pending.timeout);
@@ -1266,6 +1460,7 @@ export class AssistantService {
     message: string,
     recoverable: boolean,
   ): Promise<void> {
+    this.pendingDocumentHandoffs.delete(active.run.id);
     active.run.status = "failed";
     active.run.completedAt = new Date().toISOString();
     const error = { code, message, recoverable };
@@ -1378,6 +1573,7 @@ function mapActivity(
     kind,
     title:
       stringValue(item.name) ??
+      stringValue(item.tool) ??
       stringValue(item.query) ??
       stringValue(item.command) ??
       type ??
@@ -1534,17 +1730,29 @@ function changesMatchRunScope(
 
 function buildCodexInput(
   userText: string,
+  workspace: WorkspaceSummary,
   context?: AssistantRunContext,
 ): string {
-  if (!context) return userText;
+  if (!context) {
+    return [
+      "[Heydesk workspace context]",
+      `The active Heydesk workspace is named ${JSON.stringify(workspace.name)}.`,
+      "This request comes from the workspace Home view. There is no currently open page or document.",
+      "[/Heydesk workspace context]",
+      "",
+      userText,
+    ].join("\n");
+  }
   if (context.kind === "document") {
     return [
       "[Heydesk document context]",
-      `The user is currently viewing ${context.path}.`,
+      `The user currently has the Word document ${JSON.stringify(basename(context.path))} open in the Heydesk document editor.`,
+      `Its exact internal file reference is ${JSON.stringify(context.path)}. Use that reference directly; do not search for the active document.`,
       `The durable document revision before this turn is ${context.expectedRevision}.`,
       "Use the document namespace tools for all inspection and edits.",
       "Use append_paragraphs once for new multi-paragraph structure. Use suggest_change for reviewable replacements inside existing paragraphs.",
       "Use apply_formatting or set_paragraph_style when the user asks for formatting.",
+      `In the response, call it ${JSON.stringify(basename(context.path))} or "this document" rather than repeating its internal path.`,
       "[/Heydesk document context]",
       "",
       userText,
@@ -1552,19 +1760,62 @@ function buildCodexInput(
   }
   return [
     "[Heydesk page context]",
-    `The user is currently viewing ${context.path}.`,
+    `The user currently has the page ${JSON.stringify(basename(context.path))} open in the Heydesk page editor.`,
+    `Its exact internal file reference is ${JSON.stringify(context.path)}. Start with that file when its content is needed; do not search unrelated workspace files unless the request requires broader context.`,
     `The page revision before this turn is ${context.expectedRevision}.`,
     "Focus changes on this page. Explain conversational answers normally.",
+    `In the response, call it ${JSON.stringify(basename(context.path))} or "this page" rather than repeating its internal path.`,
     "[/Heydesk page context]",
     "",
     userText,
   ].join("\n");
 }
 
+function buildWorkspaceDeveloperInstructions(): string {
+  return [
+    "Operate only inside the current Heydesk workspace.",
+    "You are embedded in a visual editor used by non-technical users, so keep all responses concise, natural, and focused on the result visible in Heydesk.",
+    "Do not expose shell commands, tool names, directories, filesystem paths, or implementation details unless the user asks for technical information.",
+    "Heydesk has two distinct artifact types. A document always means a Microsoft Word .docx file in Documents. Never substitute a Markdown page when the user asks for a document.",
+    "A page, draft, or note means a Markdown .md file in Pages unless the user explicitly says otherwise.",
+    "Create and update pages only inside pages/. Use ATX headings, paragraphs, bold, italic, strikethrough, inline or fenced code, blockquotes, ordered or unordered lists, links, horizontal rules, and ==highlight== syntax so the page remains compatible with Heydesk's TipTap editor.",
+    "Do not put YAML frontmatter, raw HTML, MDX or JSX, task lists, Markdown tables, footnotes, reference-style links, or embedded images in generated pages unless the user explicitly requests source-only content.",
+    "When the user asks to create, draft, write, generate, or prepare a document, decide whether they mean a Word document and call workspace.create_document. Supply a concise user-facing filename and a self-contained context brief that combines the current document request with only the relevant requirements and decisions from this Home conversation. Write that context as a direct user task for the document assistant; do not mention handoffs, tools, threads, directories, or other implementation details. After the tool succeeds, finish the Home turn; Heydesk will open the blank document and continue from that bounded context through document tools.",
+    "Never create scripts, helper programs, package files, build artifacts, or temporary files in the workspace. Do not generate Word files through Python, shell commands, ZIP manipulation, raw OOXML, or direct filesystem writes.",
+    "Treat documents/ as user-owned Word content and .heydesk/ as private application state; do not modify either directly. Never create a Markdown substitute when the user asked for a document.",
+    "Refer to artifacts by their visible names and say they are available in Pages or Documents rather than describing their internal location.",
+    "Never use network access.",
+  ].join(" ");
+}
+
+function isApprovalRequest(method: string): boolean {
+  return (
+    method === "item/commandExecution/requestApproval" ||
+    method === "item/fileChange/requestApproval" ||
+    method === "item/permissions/requestApproval"
+  );
+}
+
+function declineApprovalRequest(responder: CodexServerRequestResponder): void {
+  if (responder.request.method === "item/permissions/requestApproval") {
+    responder.resolve({
+      permissions: {},
+      scope: "turn",
+      strictAutoReview: true,
+    });
+    return;
+  }
+  responder.resolve({ decision: "decline" });
+}
+
 function buildDocumentDeveloperInstructions(path: string): string {
   return [
     `You are editing ${path} inside Heydesk.`,
+    "In Heydesk, document always means a Microsoft Word .docx file; page, draft, or note refers to Markdown content in Pages.",
+    "You are embedded beside the open Word document in a visual editor used by non-technical users. Keep responses concise, natural, and focused on what changed in the document.",
+    "Do not expose dynamic tool names, paragraph identifiers, internal paths, or implementation details unless the user asks for technical information.",
     "Use only the document namespace tools. Never use shell commands, filesystem writes, or network access.",
+    "If the current document is blank and the request asks to create content, populate this already-open document. Never create another file.",
     "Inspect the relevant text and pending changes before mutating the document, and use the stable paraId returned by the read tools.",
     "Use append_paragraphs once when creating new document structure or adding several paragraphs. It can apply Word paragraph styles and run-level formatting while it creates the content. Do not simulate paragraphs with repeated insertions into one paraId.",
     "Use suggest_change for reviewable replacements and deletions inside existing paragraphs. Each suggestion must target exactly one paragraph: search must identify existing text, and search and replaceWith must never contain line breaks. Avoid ranges that overlap an unresolved tracked change.",
@@ -1575,10 +1826,20 @@ function buildDocumentDeveloperInstructions(path: string): string {
   ].join(" ");
 }
 
+function buildPageDeveloperInstructions(path: string): string {
+  return [
+    buildWorkspaceDeveloperInstructions(),
+    `This conversation belongs only to the open page ${path}. Do not assume context from Home or any other page or document conversation.`,
+    "When the user refers to this page, inspect or update that exact page rather than searching for a different artifact.",
+  ].join(" ");
+}
+
 function scopeForContext(context?: AssistantRunContext): AssistantScope {
-  return context?.kind === "document"
-    ? { kind: "document", path: context.path }
-    : { kind: "workspace" };
+  if (context?.kind === "page") return { kind: "page", path: context.path };
+  if (context?.kind === "document") {
+    return { kind: "document", path: context.path };
+  }
+  return { kind: "workspace" };
 }
 
 function repositoryKey(workspaceId: string, scope: AssistantScope): string {
@@ -1600,6 +1861,49 @@ function documentDynamicTools() {
           inputSchema: schema.function.parameters,
         }))
         .concat(appendParagraphsDynamicTool),
+    },
+  ];
+}
+
+const createDocumentToolArgumentsSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    context: z.string().trim().min(1).max(20_000),
+  })
+  .strict();
+
+function workspaceDynamicTools() {
+  return [
+    {
+      type: "namespace" as const,
+      name: "workspace",
+      description:
+        "Perform bounded Heydesk workspace actions that the visual application owns.",
+      tools: [
+        {
+          type: "function" as const,
+          name: WORKSPACE_CREATE_DOCUMENT_TOOL,
+          description:
+            "Create a valid blank Microsoft Word document in Heydesk before document editing begins. Call this when the user asks to create a document. Choose a concise visible filename and provide a self-contained handoff context distilled from the relevant conversation. Do not use shell or filesystem tools to create Word documents.",
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["name", "context"],
+            properties: {
+              name: {
+                type: "string",
+                description:
+                  "A concise visible filename. The .docx extension is optional.",
+              },
+              context: {
+                type: "string",
+                description:
+                  "A concise, self-contained continuation brief written as the user's document task. Preserve relevant requirements and decisions from the Home conversation plus the latest request, omit unrelated history, and do not mention internal tools or filesystem details.",
+              },
+            },
+          },
+        },
+      ],
     },
   ];
 }

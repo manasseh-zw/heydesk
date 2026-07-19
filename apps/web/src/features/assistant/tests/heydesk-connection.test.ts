@@ -78,7 +78,43 @@ describe("Heydesk TanStack connection adapter", () => {
     expect(source.closed).toBe(true);
   });
 
-  it("sends only the newest user text and interrupts the matching run on abort", async () => {
+  it("starts after an atomically hydrated snapshot instead of replaying stored history", async () => {
+    storage.set("heydesk:assistant:last-event:workspace-1", "19:0");
+    const controller = new AbortController();
+    const connection = createHeydeskConnection(
+      "workspace-1",
+      () => ({}),
+      { kind: "document", path: "documents/Brief.docx" },
+      () => 12,
+    );
+    const iterator = connection
+      .subscribe(controller.signal)
+      [Symbol.asyncIterator]();
+    const next = iterator.next();
+    const source = FakeEventSource.instances[0]!;
+
+    expect(source.url).toContain("scope=document");
+    expect(source.url).toContain("path=documents%2FBrief.docx");
+    expect(source.url).toContain("after=12");
+    expect(source.url).not.toContain("after=19");
+
+    source.emit(
+      { type: "RUN_STARTED", threadId: "thread-2", runId: "run-2" },
+      "13:0",
+    );
+    await expect(next).resolves.toEqual({
+      done: false,
+      value: expect.objectContaining({ type: "RUN_STARTED", runId: "run-2" }),
+    });
+
+    controller.abort();
+    await expect(iterator.next()).resolves.toEqual({
+      done: true,
+      value: undefined,
+    });
+  });
+
+  it("sends only the newest user text without cancelling the run on navigation", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal(
       "fetch",
@@ -120,7 +156,10 @@ describe("Heydesk TanStack connection adapter", () => {
       message: "new request",
     });
     controller.abort();
-    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests).toHaveLength(1);
+
+    await connection.interruptActiveRun();
+    expect(requests).toHaveLength(2);
     expect(requests[1]?.url).toContain("/runs/run-1/interrupt");
   });
 
@@ -136,18 +175,22 @@ describe("Heydesk TanStack connection adapter", () => {
         });
       },
     );
-    const connection = createHeydeskConnection("workspace-1", () => ({
-      context: {
-        kind: "page",
-        path: "pages/Notes.md",
-        expectedRevision: "a".repeat(64),
-      },
-      preferences: {
-        model: "gpt-5.6-luna",
-        effort: "low",
-        serviceTier: "fast",
-      },
-    }));
+    const connection = createHeydeskConnection(
+      "workspace-1",
+      () => ({
+        context: {
+          kind: "page",
+          path: "pages/Notes.md",
+          expectedRevision: "a".repeat(64),
+        },
+        preferences: {
+          model: "gpt-5.6-luna",
+          effort: "low",
+          serviceTier: "fast",
+        },
+      }),
+      { kind: "page", path: "pages/Notes.md" },
+    );
 
     await connection.send(
       [
@@ -165,6 +208,7 @@ describe("Heydesk TanStack connection adapter", () => {
     expect(requestBody).toMatchObject({
       runId: "run-page",
       message: "Improve this page",
+      scope: { kind: "page", path: "pages/Notes.md" },
       context: {
         path: "pages/Notes.md",
         expectedRevision: "a".repeat(64),

@@ -71,6 +71,10 @@ describe("document-scoped assistant runs", () => {
       (thread?.params as { developerInstructions: string })
         .developerInstructions,
     ).toContain("Each suggestion must target exactly one paragraph");
+    expect(
+      (thread?.params as { developerInstructions: string })
+        .developerInstructions,
+    ).toContain("document always means a Microsoft Word .docx file");
     const namespaces = (
       thread?.params as {
         dynamicTools: Array<{
@@ -104,6 +108,14 @@ describe("document-scoped assistant runs", () => {
       model: "gpt-5.6-luna",
       effort: "medium",
     });
+    const input = (turn?.params as { input: Array<{ text: string }> }).input[0]
+      ?.text;
+    expect(input).toContain(
+      'The user currently has the Word document "Proposal.docx" open in the Heydesk document editor.',
+    );
+    expect(input).toContain(
+      'exact internal file reference is "documents/Proposal.docx"',
+    );
     await expect(
       service.getSnapshot("workspace-1", {
         kind: "document",

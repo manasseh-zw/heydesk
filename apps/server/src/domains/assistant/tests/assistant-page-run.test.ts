@@ -66,6 +66,7 @@ describe("page-scoped assistant runs", () => {
     );
 
     expect(run.userText).toBe("Make the opening clearer.");
+    expect(run.scope).toEqual({ kind: "page", path: "pages/Notes.md" });
     expect(run.context).toMatchObject({ path: "pages/Notes.md" });
     const turn = codex.requests.find((request) => request.method === "turn/start");
     expect(turn?.params).toMatchObject({
@@ -77,10 +78,34 @@ describe("page-scoped assistant runs", () => {
     });
     const input = (turn?.params as { input: Array<{ text: string }> }).input[0]?.text;
     expect(input).toContain(
-      "The user is currently viewing pages/Notes.md.",
+      'The user currently has the page "Notes.md" open in the Heydesk page editor.',
     );
+    expect(input).toContain('exact internal file reference is "pages/Notes.md"');
     expect(input).toContain(page.revision);
     expect(input).toContain("Make the opening clearer.");
+    const thread = codex.requests.find(
+      (request) => request.method === "thread/start",
+    );
+    expect(
+      (thread?.params as { developerInstructions: string })
+        .developerInstructions,
+    ).toContain("keep all responses concise, natural");
+    expect(
+      (thread?.params as { developerInstructions: string })
+        .developerInstructions,
+    ).toContain("A document always means a Microsoft Word .docx file");
+    expect(
+      (thread?.params as { developerInstructions: string })
+        .developerInstructions,
+    ).toContain("A page, draft, or note means a Markdown .md file");
+    expect(
+      (thread?.params as { developerInstructions: string })
+        .developerInstructions,
+    ).toContain("Do not put YAML frontmatter, raw HTML, MDX or JSX");
+    expect(
+      (thread?.params as { developerInstructions: string })
+        .developerInstructions,
+    ).toContain("This conversation belongs only to the open page pages/Notes.md");
 
     await expect(
       service.startRun("workspace-1", "run-stale", "Edit it.", {

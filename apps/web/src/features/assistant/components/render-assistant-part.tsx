@@ -1,7 +1,6 @@
 import type { MessagePart } from "@tanstack/ai";
 import { useEffect, useState } from "react";
 
-import { Loader } from "@/components/ai/loader";
 import { Markdown } from "@/components/ai/markdown";
 import { MessageText } from "@/components/ai/message";
 import {
@@ -28,7 +27,12 @@ export function RenderAssistantPart({
         </MessageText>
       );
     case "thinking":
-      return <AssistantReasoning content={part.content} isStreaming={isStreaming} />;
+      return part.content.trim() ? (
+        <AssistantReasoning
+          content={part.content}
+          isStreaming={isStreaming}
+        />
+      ) : null;
     default:
       return null;
   }
@@ -47,11 +51,7 @@ function AssistantReasoning({
   return (
     <Reasoning onOpenChange={setOpen} open={open}>
       <ReasoningTrigger>
-        {isStreaming ? (
-          <Loader variant="shimmer">Thinking</Loader>
-        ) : (
-          "Reasoning summary"
-        )}
+        {isStreaming ? "Summarizing reasoning" : "Reasoning summary"}
       </ReasoningTrigger>
       <ReasoningContent>
         <Markdown>{content}</Markdown>

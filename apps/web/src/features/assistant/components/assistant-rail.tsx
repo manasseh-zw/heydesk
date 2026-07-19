@@ -16,6 +16,7 @@ type AssistantRailProps = {
   composerContext?: ComposerContext;
   disabled: boolean;
   minimalHeader?: boolean;
+  persistent?: boolean;
   mobileOpen: boolean;
   onMobileOpenChange: (open: boolean) => void;
   onOpenChange: (open: boolean) => void;
@@ -35,6 +36,7 @@ export function AssistantRail({
   composerContext = "page",
   disabled,
   minimalHeader = false,
+  persistent = false,
   mobileOpen,
   onMobileOpenChange,
   onOpenChange,
@@ -50,7 +52,7 @@ export function AssistantRail({
     <>
       <aside
         aria-hidden={!open}
-        className={`relative hidden shrink-0 flex-col overflow-hidden border-l bg-background transition-[width,min-width,max-width,opacity,border-color] duration-200 ease-linear lg:flex ${open ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
+        className={`relative shrink-0 flex-col overflow-hidden border-l bg-background transition-[width,min-width,max-width,opacity,border-color] duration-200 ease-linear ${persistent ? "flex" : "hidden lg:flex"} ${open ? "border-border opacity-100" : "pointer-events-none border-transparent opacity-0"}`}
         inert={open ? undefined : true}
         style={{
           width: open ? width : 0,
@@ -118,19 +120,21 @@ export function AssistantRail({
         </div>
       </aside>
 
-      <Sheet onOpenChange={onMobileOpenChange} open={mobileOpen}>
-        <SheetContent className="w-[min(92vw,28rem)] max-w-none p-0" side="right">
-          <SheetTitle className="sr-only">{title}</SheetTitle>
-          <AssistantHome
-            compactSurface
-            composerContext={composerContext}
-            disabled={disabled}
-            onOpenPage={onOpenPage}
-            onSend={onSend}
-            workspace={workspace}
-          />
-        </SheetContent>
-      </Sheet>
+      {!persistent && (
+        <Sheet onOpenChange={onMobileOpenChange} open={mobileOpen}>
+          <SheetContent className="w-[min(92vw,28rem)] max-w-none p-0" side="right">
+            <SheetTitle className="sr-only">{title}</SheetTitle>
+            <AssistantHome
+              compactSurface
+              composerContext={composerContext}
+              disabled={disabled}
+              onOpenPage={onOpenPage}
+              onSend={onSend}
+              workspace={workspace}
+            />
+          </SheetContent>
+        </Sheet>
+      )}
     </>
   );
 }

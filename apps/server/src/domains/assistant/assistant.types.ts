@@ -30,6 +30,8 @@ export type AssistantRun = {
 
 export type AssistantScope =
   | { kind: "workspace" }
+  | { kind: "home"; sessionId: string }
+  | { kind: "page"; path: string }
   | { kind: "document"; path: string };
 
 export type AssistantRunContext =
@@ -114,6 +116,13 @@ export type AssistantDocumentToolCall = {
   expiresAt: string;
 };
 
+export type AssistantDocumentHandoff = {
+  sourceRunId: string;
+  path: string;
+  name: string;
+  revision: string;
+};
+
 export type AssistantError = {
   code: string;
   message: string;
@@ -139,6 +148,7 @@ export type AssistantEvent =
   | { type: "interaction.resolved"; interactionId: string }
   | { type: "document-tool.requested"; call: AssistantDocumentToolCall }
   | { type: "document-tool.resolved"; callId: string }
+  | { type: "document.created"; handoff: AssistantDocumentHandoff }
   | { type: "artifact.committed"; artifact: AssistantArtifact }
   | { type: "run.completed"; run: AssistantRun }
   | { type: "run.failed"; runId: string; error: AssistantError };

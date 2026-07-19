@@ -121,3 +121,20 @@ export function AgentRunStep({
     />
   );
 }
+
+export function AgentRunText({
+  className,
+  ...props
+}: React.ComponentProps<"div">) {
+  return (
+    <div
+      className={cn(
+        "text-sm text-foreground/80",
+        "[&_code]:rounded [&_code]:bg-surface-elevated [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs [&_code]:text-foreground",
+        className,
+      )}
+      data-slot="agent-run-text"
+      {...props}
+    />
+  );
+}

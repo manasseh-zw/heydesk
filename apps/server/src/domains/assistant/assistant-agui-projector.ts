@@ -58,8 +58,8 @@ export function projectAssistantEvent(event: AssistantEvent): StreamChunk[] {
         {
           type: EventType.TOOL_CALL_START,
           toolCallId: event.activity.id,
-          toolName: `heydesk.${event.activity.kind}`,
-          toolCallName: `heydesk.${event.activity.kind}`,
+          toolName: activityToolName(event.activity),
+          toolCallName: activityToolName(event.activity),
         },
         {
           type: EventType.TOOL_CALL_ARGS,
@@ -116,11 +116,33 @@ export function projectAssistantEvent(event: AssistantEvent): StreamChunk[] {
       return [custom("heydesk:document-tool-call", event.call)];
     case "document-tool.resolved":
       return [custom("heydesk:document-tool-resolved", event)];
+    case "document.created":
+      return [custom("heydesk:document-created", event.handoff)];
     case "artifact.committed":
       return [custom("heydesk:artifact-committed", event.artifact)];
     case "run.status":
       return [custom("heydesk:run-snapshot", event)];
   }
+}
+
+function activityToolName(
+  activity: Extract<AssistantEvent, { type: "activity.started" }>['activity'],
+): string {
+  const input = asRecord(activity.input);
+  const tool = stringValue(input.tool);
+  const namespace = stringValue(input.namespace);
+  if (tool) return `heydesk.${namespace ?? activity.kind}.${tool}`;
+  return `heydesk.${activity.kind}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 export function projectSnapshot(snapshot: unknown): StreamChunk {

@@ -1,4 +1,12 @@
-import { lazy, Suspense, useCallback, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -17,7 +25,15 @@ import {
 
 import type { WorkspaceSummary } from "../workspace.types";
 import { AssistantHome } from "@/features/assistant/components/assistant-home";
-import { AssistantSessionProvider } from "@/features/assistant/assistant-session";
+import {
+  AssistantSessionProvider,
+  useAssistantSession,
+} from "@/features/assistant/assistant-session";
+import type {
+  AssistantDocumentHandoff,
+  AssistantRunPreferences,
+  AssistantScope,
+} from "@/features/assistant/assistant.types";
 import { PageView } from "@/features/page/components/page-view";
 import { pageKeys } from "@/features/page/page.queries";
 import { createPage } from "@/features/page/page.service";
@@ -28,6 +44,10 @@ import {
 } from "@/features/document/document.service";
 import { preloadDocumentView } from "@/features/document/components/lazy-document-view";
 import { WorkspaceSidebar } from "./sidebar";
+import {
+  messageForComposerSubmission,
+  type ComposerSubmission,
+} from "../workspace-assistant-routing";
 
 const LazyDocumentView = lazy(() =>
   preloadDocumentView().then((module) => ({ default: module.DocumentView })),
@@ -45,7 +65,11 @@ export function WorkspaceShell({
   const isDesktop = Boolean(window.heydeskDesktop);
   const queryClient = useQueryClient();
   const [activePagePath, setActivePagePath] = useState<string | null>(null);
-  const [activeDocumentPath, setActiveDocumentPath] = useState<string | null>(null);
+  const [activeDocumentPath, setActiveDocumentPath] = useState<string | null>(
+    null,
+  );
+  const [homeSessionId] = useState(() => crypto.randomUUID());
+  const handledDocumentHandoffsRef = useRef(new Set<string>());
   const flushContentRef = useRef<(() => Promise<void>) | null>(null);
 
   const afterFlush = async (navigate: () => void) => {
@@ -78,21 +102,27 @@ export function WorkspaceShell({
   const createWorkspacePage = async (name: string) => {
     await flushContentRef.current?.();
     const page = await createPage(workspace.id, name);
-    await queryClient.invalidateQueries({ queryKey: pageKeys.all(workspace.id) });
+    await queryClient.invalidateQueries({
+      queryKey: pageKeys.all(workspace.id),
+    });
     setActiveDocumentPath(null);
     setActivePagePath(page.path);
   };
   const createWordDocument = async (name: string) => {
     await flushContentRef.current?.();
     const document = await createDocument(workspace.id, name);
-    await queryClient.invalidateQueries({ queryKey: documentKeys.all(workspace.id) });
+    await queryClient.invalidateQueries({
+      queryKey: documentKeys.all(workspace.id),
+    });
     setActivePagePath(null);
     setActiveDocumentPath(document.path);
   };
   const importWordDocument = async (file: File) => {
     await flushContentRef.current?.();
     const document = await importDocument(workspace.id, file);
-    await queryClient.invalidateQueries({ queryKey: documentKeys.all(workspace.id) });
+    await queryClient.invalidateQueries({
+      queryKey: documentKeys.all(workspace.id),
+    });
     setActivePagePath(null);
     setActiveDocumentPath(document.path);
   };
@@ -106,93 +136,186 @@ export function WorkspaceShell({
   const registerFlush = useCallback((flush: (() => Promise<void>) | null) => {
     flushContentRef.current = flush;
   }, []);
-  const assistantScope = activeDocumentPath
-    ? ({ kind: "document", path: activeDocumentPath } as const)
-    : ({ kind: "workspace" } as const);
-
+  const handleDocumentHandoff = useCallback(
+    (handoff: AssistantDocumentHandoff) => {
+      if (handledDocumentHandoffsRef.current.has(handoff.sourceRunId)) return;
+      handledDocumentHandoffsRef.current.add(handoff.sourceRunId);
+      openDocument(handoff.path);
+    },
+    [],
+  );
   return (
     <SidebarProvider className="h-full overflow-hidden">
-      <AssistantSessionProvider
-        key={activeDocumentPath ? `document:${activeDocumentPath}` : "workspace"}
-        scope={assistantScope}
+      <WorkspaceSidebar
+        activePagePath={activePagePath}
+        activeDocumentPath={activeDocumentPath}
+        onCreateDocument={createWordDocument}
+        onImportDocument={importWordDocument}
+        onCreatePage={createWorkspacePage}
+        onOpenDocument={openDocument}
+        onOpenPage={openPage}
+        onOpenHome={openHome}
+        onSwitchWorkspace={closeWorkspace}
         workspace={workspace}
-      >
-        <WorkspaceSidebar
-          activePagePath={activePagePath}
-          activeDocumentPath={activeDocumentPath}
-          onCreateDocument={createWordDocument}
-          onImportDocument={importWordDocument}
-          onCreatePage={createWorkspacePage}
-          onOpenDocument={openDocument}
-          onOpenPage={openPage}
-          onOpenHome={openHome}
-          onSwitchWorkspace={closeWorkspace}
-          workspace={workspace}
-        />
+      />
 
-        <SidebarInset
-          className={`h-full min-h-0 overflow-hidden ${isDesktop ? "peer-data-[state=collapsed]:[--desktop-titlebar-reserve:78px]" : ""}`}
+      <SidebarInset
+        className={`h-full min-h-0 overflow-hidden ${isDesktop ? "peer-data-[state=collapsed]:[--desktop-titlebar-reserve:78px]" : ""}`}
+      >
+        <header
+          className={`flex shrink-0 items-center gap-3 border-b pr-3 pl-[calc(0.75rem+var(--desktop-titlebar-reserve,0px))] transition-[padding] ${isDesktop ? "h-16 py-3 [-webkit-app-region:drag]" : "h-12"}`}
         >
-          <header
-            className={`flex shrink-0 items-center gap-3 border-b pr-3 pl-[calc(0.75rem+var(--desktop-titlebar-reserve,0px))] transition-[padding] ${isDesktop ? "h-16 py-3 [-webkit-app-region:drag]" : "h-12"}`}
-          >
-            <SidebarTrigger
-              className={isDesktop ? "[-webkit-app-region:no-drag]" : ""}
-            />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink
-                    render={
-                      <button
-                        className={
-                          isDesktop ? "[-webkit-app-region:no-drag]" : ""
-                        }
-                        onClick={openHome}
-                        type="button"
-                      />
-                    }
-                  >
-                    {workspace.name}
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>{currentPage}</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </header>
-          <main className="flex min-h-0 flex-1 overflow-hidden">
+          <SidebarTrigger
+            className={isDesktop ? "[-webkit-app-region:no-drag]" : ""}
+          />
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbLink
+                  render={
+                    <button
+                      className={
+                        isDesktop ? "[-webkit-app-region:no-drag]" : ""
+                      }
+                      onClick={openHome}
+                      type="button"
+                    />
+                  }
+                >
+                  {workspace.name}
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage>{currentPage}</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+        </header>
+        <main className="flex min-h-0 flex-1 overflow-hidden">
           {activePagePath ? (
-            <PageView
-              onOpenPage={openPage}
-              onRegisterFlush={registerFlush}
-              path={activePagePath}
+            <ScopedAssistantSurface
+              key={`page:${activePagePath}`}
+              scope={{ kind: "page", path: activePagePath }}
               workspace={workspace}
-            />
-          ) : activeDocumentPath ? (
-            <Suspense
-              fallback={
-                <div className="m-auto text-sm text-muted-foreground">
-                  Loading Word editor…
-                </div>
-              }
             >
-              <LazyDocumentView
+              <PageView
+                onOpenDocument={openDocument}
                 onOpenPage={openPage}
                 onRegisterFlush={registerFlush}
-                path={activeDocumentPath}
+                path={activePagePath}
                 workspace={workspace}
               />
-            </Suspense>
+            </ScopedAssistantSurface>
+          ) : activeDocumentPath ? (
+            <ScopedAssistantSurface
+              key={`document:${activeDocumentPath}`}
+              scope={{ kind: "document", path: activeDocumentPath }}
+              workspace={workspace}
+            >
+              <Suspense
+                fallback={
+                  <div className="m-auto text-sm text-muted-foreground">
+                    Loading Word editor…
+                  </div>
+                }
+              >
+                <LazyDocumentView
+                  onOpenPage={openPage}
+                  onRegisterFlush={registerFlush}
+                  path={activeDocumentPath}
+                  workspace={workspace}
+                />
+              </Suspense>
+            </ScopedAssistantSurface>
           ) : (
-            <AssistantHome onOpenPage={openPage} workspace={workspace} />
+            <HomeAssistantSessionSurface
+              onDocumentHandoff={handleDocumentHandoff}
+              onOpenPage={openPage}
+              sessionId={homeSessionId}
+              workspace={workspace}
+            />
           )}
-          </main>
-        </SidebarInset>
-      </AssistantSessionProvider>
+        </main>
+      </SidebarInset>
     </SidebarProvider>
+  );
+}
+
+function ScopedAssistantSurface({
+  children,
+  scope,
+  workspace,
+}: {
+  children: ReactNode;
+  scope: AssistantScope;
+  workspace: WorkspaceSummary;
+}) {
+  return (
+    <AssistantSessionProvider scope={scope} workspace={workspace}>
+      {children}
+    </AssistantSessionProvider>
+  );
+}
+
+function HomeAssistantSessionSurface({
+  onDocumentHandoff,
+  onOpenPage,
+  sessionId,
+  workspace,
+}: {
+  onDocumentHandoff: (handoff: AssistantDocumentHandoff) => void;
+  onOpenPage: (path: string) => void;
+  sessionId: string;
+  workspace: WorkspaceSummary;
+}) {
+  return (
+    <ScopedAssistantSurface
+      scope={{ kind: "home", sessionId }}
+      workspace={workspace}
+    >
+      <HomeAssistantSurface
+        onDocumentHandoff={onDocumentHandoff}
+        onOpenPage={onOpenPage}
+        workspace={workspace}
+      />
+    </ScopedAssistantSurface>
+  );
+}
+
+function HomeAssistantSurface({
+  onDocumentHandoff,
+  onOpenPage,
+  workspace,
+}: {
+  onDocumentHandoff: (handoff: AssistantDocumentHandoff) => void;
+  onOpenPage: (path: string) => void;
+  workspace: WorkspaceSummary;
+}) {
+  const session = useAssistantSession();
+  useEffect(() => {
+    const handoff = session.state.documentHandoff;
+    if (handoff) onDocumentHandoff(handoff);
+  }, [onDocumentHandoff, session.state.documentHandoff]);
+  const sendHomeMessage = async (
+    message: string,
+    preferences?: AssistantRunPreferences,
+    submission?: ComposerSubmission,
+  ) => {
+    await session.sendMessage(
+      messageForComposerSubmission(message, submission),
+      {
+        preferences,
+      },
+    );
+  };
+
+  return (
+    <AssistantHome
+      onOpenPage={onOpenPage}
+      onSend={sendHomeMessage}
+      workspace={workspace}
+    />
   );
 }
 

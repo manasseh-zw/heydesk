@@ -40,6 +40,10 @@ import type {
   AssistantModel,
   AssistantRunPreferences,
 } from "@/features/assistant/assistant.types";
+import type {
+  ComposerCommandId,
+  ComposerSubmission,
+} from "../workspace-assistant-routing";
 import { useState } from "react";
 
 export type ComposerContext = "workspace" | "page" | "document";
@@ -102,7 +106,7 @@ const commandsByContext = {
       icon: <TextQuoteIcon />,
     },
   ],
-} satisfies Record<ComposerContext, ComposerItem[]>;
+} satisfies Record<ComposerContext, Array<ComposerItem & { id: ComposerCommandId }>>;
 
 type HomeComposerProps = {
   compact?: boolean;
@@ -113,6 +117,7 @@ type HomeComposerProps = {
   onSubmit?: (
     text: string,
     preferences?: AssistantRunPreferences,
+    submission?: ComposerSubmission,
   ) => void | Promise<void>;
 };
 
@@ -145,6 +150,8 @@ export function HomeComposer({
   const [value, setValue] = useState<ComposerValue>(emptyValue);
   const [selectedModelId, setSelectedModelId] =
     useState<CodexModelId>("gpt-5.6-luna");
+  const [selectedCommandId, setSelectedCommandId] =
+    useState<ComposerCommandId | undefined>();
   const modelsQuery = useQuery({
     queryKey: assistantKeys.models(),
     queryFn: getAssistantModels,
@@ -166,7 +173,9 @@ export function HomeComposer({
             effort: selectedModel.defaultReasoningEffort,
           }
         : undefined,
+      selectedCommandId ? { commandId: selectedCommandId } : undefined,
     );
+    setSelectedCommandId(undefined);
     setValue(emptyValue);
   };
 
@@ -203,7 +212,13 @@ export function HomeComposer({
           onValueChange={setValue}
           placeholder="Ask Heydesk anything. Type / for actions."
           triggers={{
-            "/": { items: commandsByContext[context] },
+            "/": {
+              items: commandsByContext[context],
+              onSelect(item, selection) {
+                setSelectedCommandId(item.id as ComposerCommandId);
+                selection.clearTrigger();
+              },
+            },
           }}
           value={value}
         />

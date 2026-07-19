@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@heydesk/ui/components/button";
+import { ThinkingIndicator } from "@heydesk/ui/components/thinking-indicator";
 
 import {
   Conversation,
@@ -21,16 +22,13 @@ import {
 } from "@/components/ai/exception";
 import { Message, MessageContent } from "@/components/ai/message";
 import { Task, TaskIcon, TaskItem, TaskLabel } from "@/components/ai/task";
-import { Loader } from "@/components/ai/loader";
-import {
-  Reasoning,
-  ReasoningTrigger,
-} from "@/components/ai/reasoning";
+import { LogoMark } from "@/components/logo";
 import {
   HomeComposer,
   type ComposerContext,
 } from "@/features/workspace/components/home-composer";
 import type { WorkspaceSummary } from "@/features/workspace/workspace.types";
+import type { ComposerSubmission } from "@/features/workspace/workspace-assistant-routing";
 import type { AssistantRunPreferences } from "../assistant.types";
 import {
   getAssistantReadiness,
@@ -47,6 +45,7 @@ type AssistantHomeProps = {
   onSend?: (
     message: string,
     preferences?: AssistantRunPreferences,
+    submission?: ComposerSubmission,
   ) => Promise<void>;
   compactSurface?: boolean;
   composerContext?: ComposerContext;
@@ -74,6 +73,40 @@ export function AssistantHome({
       session.sendMessage(message, { preferences }));
 
   if (!hasMessages) {
+    if (compactSurface && composerContext !== "workspace") {
+      return (
+        <div className="flex size-full min-h-0 flex-col">
+          <div className="flex min-h-0 flex-1 items-center justify-center p-4">
+            <div className="-translate-y-8 flex flex-col items-center text-center">
+              <div className="flex items-center gap-1.5">
+                <LogoMark className="size-5 shrink-0 text-logo-mark" />
+                <span className="font-brand text-lg font-light tracking-tight">
+                  Heydesk
+                </span>
+              </div>
+              <p className="mt-2 max-w-64 text-sm leading-5 text-foreground/70">
+                {composerContext === "page"
+                  ? "Have Codex edit and improve this page."
+                  : "Have Codex improve this document."}
+              </p>
+            </div>
+          </div>
+
+          <div className="relative z-10 shrink-0 bg-background/90 px-3 pt-3 pb-3 backdrop-blur-xl before:pointer-events-none before:absolute before:inset-x-0 before:-top-8 before:h-8 before:bg-gradient-to-t before:from-background/95 before:to-transparent">
+            <HomeComposer
+              compact
+              context={composerContext}
+              disabled={!canSend}
+              isRunning={isRunning}
+              onStop={session.stop}
+              onSubmit={sendMessage}
+            />
+            <ReadinessNotice readiness={readiness} compact />
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div
         className={`flex size-full items-center justify-center ${compactSurface ? "p-4" : "p-8"}`}
@@ -105,6 +138,7 @@ export function AssistantHome({
                 >
                   <MessageContent>
                     <RenderAssistantMessage
+                      activityProgress={state.activityProgress}
                       isStreaming={
                         isRunning &&
                         message.role === "assistant" &&
@@ -132,11 +166,7 @@ export function AssistantHome({
             {waitingForFirstAssistantPart && (
               <Message type="incoming">
                 <MessageContent>
-                  <Reasoning defaultOpen>
-                    <ReasoningTrigger>
-                      <Loader dots variant="shimmer">Thinking</Loader>
-                    </ReasoningTrigger>
-                  </Reasoning>
+                  <ThinkingIndicator className="px-0" />
                 </MessageContent>
               </Message>
             )}

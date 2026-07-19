@@ -11,7 +11,9 @@ import type {
   AssistantScope,
 } from "./assistant.types";
 
-export type HeydeskConnection = SubscribeConnectionAdapter;
+export type HeydeskConnection = SubscribeConnectionAdapter & {
+  interruptActiveRun: () => Promise<void>;
+};
 
 export function createHeydeskConnection(
   workspaceId: string,
@@ -20,43 +22,44 @@ export function createHeydeskConnection(
     preferences?: AssistantRunPreferences;
   } = () => ({}),
   scope: AssistantScope = { kind: "workspace" },
+  getReplayAfterSequence: () => number | undefined = () => undefined,
 ): HeydeskConnection {
   let activeRunId: string | null = null;
 
   return {
     subscribe(abortSignal) {
-      return createEventStream(workspaceId, scope, abortSignal);
+      return createEventStream(
+        workspaceId,
+        scope,
+        abortSignal,
+        getReplayAfterSequence(),
+      );
     },
-    async send(messages, _data, abortSignal, runContext) {
+    async send(messages, _data, _abortSignal, runContext) {
       const runId = requireRunId(runContext);
       const message = extractNewestUserText(messages);
       activeRunId = runId;
-      const interrupt = () => {
-        if (activeRunId !== runId) return;
-        void request(
-          `/api/workspaces/${encodeURIComponent(workspaceId)}/assistant/runs/${encodeURIComponent(runId)}/interrupt`,
-          { method: "POST" },
-        ).catch(() => undefined);
-      };
-      abortSignal?.addEventListener("abort", interrupt, { once: true });
-      try {
-        const options = getRunOptions();
-        await request(
-          `/api/workspaces/${encodeURIComponent(workspaceId)}/assistant/runs`,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              runId,
-              message,
-              ...(scope.kind === "document" ? { scope } : {}),
-              ...options,
-            }),
-            signal: abortSignal,
-          },
-        );
-      } finally {
-        if (abortSignal?.aborted) interrupt();
-      }
+      const options = getRunOptions();
+      await request(
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/assistant/runs`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            runId,
+            message,
+            ...(scope.kind === "workspace" ? {} : { scope }),
+            ...options,
+          }),
+        },
+      );
+    },
+    async interruptActiveRun() {
+      if (!activeRunId) return;
+      const runId = activeRunId;
+      await request(
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/assistant/runs/${encodeURIComponent(runId)}/interrupt`,
+        { method: "POST" },
+      );
     },
   };
 }
@@ -65,18 +68,27 @@ async function* createEventStream(
   workspaceId: string,
   scope: AssistantScope,
   abortSignal?: AbortSignal,
+  replayAfterSequence?: number,
 ): AsyncIterable<StreamChunk> {
-  const scopeKey = scope.kind === "document" ? `document:${scope.path}` : "workspace";
+  const scopeKey = assistantScopeKey(scope);
   const storageKey =
-    scope.kind === "document"
-      ? `heydesk:assistant:last-event:${workspaceId}:${scopeKey}`
-      : `heydesk:assistant:last-event:${workspaceId}`;
+    scope.kind === "workspace"
+      ? `heydesk:assistant:last-event:${workspaceId}`
+      : `heydesk:assistant:last-event:${workspaceId}:${scopeKey}`;
   const lastEventId = sessionStorage.getItem(storageKey);
-  const after = lastEventId?.split(":")[0];
+  const after =
+    replayAfterSequence === undefined
+      ? lastEventId?.split(":")[0]
+      : String(replayAfterSequence);
   const search = new URLSearchParams();
-  if (after) search.set("after", after);
-  if (scope.kind === "document") {
-    search.set("scope", "document");
+  if (after && after !== "0") search.set("after", after);
+  if (scope.kind !== "workspace") {
+    search.set("scope", scope.kind);
+  }
+  if (scope.kind === "home") {
+    search.set("sessionId", scope.sessionId);
+  }
+  if (scope.kind === "page" || scope.kind === "document") {
     search.set("path", scope.path);
   }
   const query = search.size > 0 ? `?${search}` : "";
@@ -120,6 +132,14 @@ async function* createEventStream(
     source.close();
     abortSignal?.removeEventListener("abort", finish);
   }
+}
+
+function assistantScopeKey(scope: AssistantScope): string {
+  if (scope.kind === "home") return `home:${scope.sessionId}`;
+  if (scope.kind === "page" || scope.kind === "document") {
+    return `${scope.kind}:${scope.path}`;
+  }
+  return "workspace";
 }
 
 function requireRunId(context?: RunAgentInputContext): string {

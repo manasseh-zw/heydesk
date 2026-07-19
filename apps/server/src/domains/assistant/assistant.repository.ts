@@ -342,7 +342,9 @@ export class AssistantRepository {
 }
 
 export function scopeKey(scope: AssistantScope): string {
-  return scope.kind === "document" ? scope.path : "";
+  if (scope.kind === "home") return scope.sessionId;
+  if (scope.kind === "page" || scope.kind === "document") return scope.path;
+  return "";
 }
 
 async function addColumnIfMissing(

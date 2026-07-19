@@ -58,9 +58,14 @@ export async function respondToDocumentTool(
 }
 
 export function assistantScopeQuery(scope: AssistantScope): string {
-  return scope.kind === "document"
-    ? `?scope=document&path=${encodeURIComponent(scope.path)}`
-    : "";
+  const search = new URLSearchParams();
+  if (scope.kind === "workspace") return "";
+  search.set("scope", scope.kind);
+  if (scope.kind === "home") search.set("sessionId", scope.sessionId);
+  if (scope.kind === "page" || scope.kind === "document") {
+    search.set("path", scope.path);
+  }
+  return `?${search}`;
 }
 
 export async function respondToAssistantInteraction(
@@ -177,14 +182,13 @@ export function snapshotToMessages(snapshot: AssistantSnapshot): UIMessage[] {
         const activity = asRecord(event.activity);
         const id = recordString(activity, "id");
         if (!id) continue;
-        const kind = recordString(activity, "kind") ?? "other";
         const input = activity.input ?? {
           title: recordString(activity, "title"),
         };
         const part = {
           type: "tool-call" as const,
           id,
-          name: `heydesk.${kind}`,
+          name: activityToolName(activity),
           arguments: JSON.stringify(input),
           input,
           state: "input-complete" as const,
@@ -196,7 +200,6 @@ export function snapshotToMessages(snapshot: AssistantSnapshot): UIMessage[] {
         const activity = asRecord(event.activity);
         const id = recordString(activity, "id");
         if (!id) continue;
-        const kind = recordString(activity, "kind") ?? "other";
         const status = recordString(activity, "status");
         const failed = status === "failed";
         let tool = toolsById.get(id);
@@ -207,7 +210,7 @@ export function snapshotToMessages(snapshot: AssistantSnapshot): UIMessage[] {
           tool = {
             type: "tool-call",
             id,
-            name: `heydesk.${kind}`,
+            name: activityToolName(activity),
             arguments: JSON.stringify(input),
             input,
             state: failed ? "error" : "complete",
@@ -240,6 +243,14 @@ export function snapshotToMessages(snapshot: AssistantSnapshot): UIMessage[] {
     }
   }
   return messages;
+}
+
+function activityToolName(activity: Record<string, unknown>): string {
+  const kind = recordString(activity, "kind") ?? "other";
+  const input = asRecord(activity.input);
+  const tool = recordString(input, "tool");
+  const namespace = recordString(input, "namespace");
+  return tool ? `heydesk.${namespace ?? kind}.${tool}` : `heydesk.${kind}`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

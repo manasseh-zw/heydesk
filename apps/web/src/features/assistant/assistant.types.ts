@@ -30,6 +30,8 @@ export type AssistantRun = {
 
 export type AssistantScope =
   | { kind: "workspace" }
+  | { kind: "home"; sessionId: string }
+  | { kind: "page"; path: string }
   | { kind: "document"; path: string };
 
 export type AssistantRunContext =
@@ -108,14 +110,23 @@ export type AssistantDocumentToolCall = {
   expiresAt: string;
 };
 
+export type AssistantDocumentHandoff = {
+  sourceRunId: string;
+  path: string;
+  name: string;
+  revision: string;
+};
+
 export type AssistantClientState = {
   readiness?: AssistantReadiness;
   activeRun: AssistantRun | null;
   interactions: AssistantInteraction[];
   plan: AssistantPlanStep[];
+  activityProgress: Record<string, string>;
   fileDiffs: unknown[];
   artifacts: AssistantArtifact[];
   documentToolCalls: AssistantDocumentToolCall[];
+  documentHandoff?: AssistantDocumentHandoff;
   error?: { code?: string; message: string };
 };
 
