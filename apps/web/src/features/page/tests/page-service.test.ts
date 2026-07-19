@@ -1,11 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { savePage } from "../page.service";
+import { createPage, savePage } from "../page.service";
 import { PageRevisionConflictError, type Page } from "../page.types";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("page client service", () => {
+  it("creates a page with the chosen sidebar name", async () => {
+    let request: { input: unknown; init?: RequestInit } | undefined;
+    const created = page({ path: "pages/Plan.md", title: "Plan" });
+    vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
+      request = { input, init };
+      return Response.json(created, { status: 201 });
+    });
+
+    await expect(createPage("workspace-1", "Plan")).resolves.toEqual(created);
+    expect(String(request?.input)).toContain("/workspaces/workspace-1/pages");
+    expect(request?.init?.method).toBe("POST");
+    expect(JSON.parse(String(request?.init?.body))).toEqual({ name: "Plan" });
+  });
+
   it("sends revision-aware writes and returns the new baseline", async () => {
     let body: unknown;
     const updated = page({ revision: "b".repeat(64), content: "# Updated" });
@@ -17,7 +31,7 @@ describe("page client service", () => {
     await expect(
       savePage(
         "workspace-1",
-        "Notes.md",
+        "pages/Notes.md",
         "# Updated",
         "a".repeat(64),
         "user",
@@ -46,7 +60,7 @@ describe("page client service", () => {
     try {
       await savePage(
         "workspace-1",
-        "Notes.md",
+        "pages/Notes.md",
         "# Mine",
         "a".repeat(64),
         "user",
@@ -61,7 +75,7 @@ describe("page client service", () => {
 
 function page(overrides: Partial<Page>): Page {
   return {
-    path: "Notes.md",
+    path: "pages/Notes.md",
     name: "Notes",
     title: "Notes",
     excerpt: "",

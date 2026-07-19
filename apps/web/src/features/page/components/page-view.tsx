@@ -17,31 +17,37 @@ import {
   AlertCircleIcon,
   BoldIcon,
   CheckIcon,
-  ChevronRightIcon,
   Code2Icon,
   Heading1Icon,
   Heading2Icon,
   HighlighterIcon,
   ItalicIcon,
+  ListCollapseIcon,
   ListIcon,
+  ListMinusIcon,
   ListOrderedIcon,
   LoaderCircleIcon,
   PanelRightOpenIcon,
   QuoteIcon,
   Redo2Icon,
   RotateCcwIcon,
+  SendHorizontalIcon,
   SparklesIcon,
+  SpellCheck2Icon,
   StrikethroughIcon,
   UnderlineIcon,
   Undo2Icon,
+  WandSparklesIcon,
   XIcon,
 } from "lucide-react";
 
 import { Button } from "@heydesk/ui/components/button";
+import { Input } from "@heydesk/ui/components/input";
 import { Textarea } from "@heydesk/ui/components/textarea";
 
 import { AssistantRail } from "@/features/assistant/components/assistant-rail";
 import { useAssistantSession } from "@/features/assistant/assistant-session";
+import type { AssistantRunPreferences } from "@/features/assistant/assistant.types";
 import type { WorkspaceSummary } from "@/features/workspace/workspace.types";
 import { pageKeys, pageQueryOptions } from "../page.queries";
 import {
@@ -54,6 +60,7 @@ import {
   PageQuickEditSuggestion,
   showPageQuickEditSuggestion,
 } from "../page-quick-edit-suggestion";
+import { resolvePageEditorMode } from "../page-editor-mode";
 import {
   PageRevisionConflictError,
   type Page,
@@ -143,6 +150,7 @@ function LoadedPageView({
   const [mobileRailOpen, setMobileRailOpen] = useState(false);
   const [railWidth, setRailWidth] = useState(380);
   const [quickEditLoading, setQuickEditLoading] = useState(false);
+  const [quickEditError, setQuickEditError] = useState<string>();
   const [quickEditPreview, setQuickEditPreview] =
     useState<QuickEditPreview | null>(null);
   const [sourceSelection, setSourceSelection] = useState({ from: 0, to: 0 });
@@ -154,6 +162,9 @@ function LoadedPageView({
   const previousRunIdRef = useRef<string | undefined>(undefined);
   const abortQuickEditRef = useRef<AbortController | undefined>(undefined);
   const sourceEditorRef = useRef<HTMLTextAreaElement>(null);
+  const [editorMode, setEditorMode] = useState(() =>
+    resolvePageEditorMode(page),
+  );
 
   const setCurrentContent = useCallback((next: string, state: SaveState) => {
     contentRef.current = next;
@@ -169,7 +180,7 @@ function LoadedPageView({
       Highlight,
       PageQuickEditSuggestion,
     ],
-    content: page.content,
+    content: editorMode === "rich" ? page.content : "",
     contentType: "markdown",
     editorProps: {
       attributes: {
@@ -214,7 +225,11 @@ function LoadedPageView({
   const loadPage = useCallback(
     (next: Page, syncEditor = true) => {
       suppressEditorUpdateRef.current = true;
-      if (syncEditor && editor && next.editorMode === "rich") {
+      const nextEditorMode = syncEditor
+        ? resolvePageEditorMode(next)
+        : editorMode;
+      if (syncEditor) setEditorMode(nextEditorMode);
+      if (syncEditor && editor && nextEditorMode === "rich") {
         clearPageQuickEditSuggestion(editor);
         editor.commands.setContent(next.content, {
           contentType: "markdown",
@@ -232,7 +247,14 @@ function LoadedPageView({
         next,
       );
     },
-    [page.path, editor, queryClient, setCurrentContent, workspace.id],
+    [
+      page.path,
+      editor,
+      editorMode,
+      queryClient,
+      setCurrentContent,
+      workspace.id,
+    ],
   );
 
   const saveNow = useCallback(
@@ -346,7 +368,7 @@ function LoadedPageView({
   }, [onRegisterFlush, saveNow]);
 
   const selection = () => {
-    if (page.editorMode === "source") return sourceSelection;
+    if (editorMode === "source") return sourceSelection;
     if (!editor) return { from: 0, to: 0 };
     return { from: editor.state.selection.from, to: editor.state.selection.to };
   };
@@ -361,12 +383,13 @@ function LoadedPageView({
     const range = captured?.selection ?? selection();
     const originalContent = captured?.originalContent ?? contentRef.current;
     const selected =
-      page.editorMode === "rich" && editor
+      editorMode === "rich" && editor
         ? editor.state.doc.textBetween(range.from, range.to, "\n")
         : originalContent.slice(range.from, range.to);
     if (!selected.trim()) return;
     const controller = new AbortController();
     abortQuickEditRef.current = controller;
+    setQuickEditError(undefined);
     setQuickEditLoading(true);
     try {
       const result = await quickEditPage(
@@ -381,7 +404,7 @@ function LoadedPageView({
         controller.signal,
       );
       let next: string;
-      if (editor && page.editorMode === "rich") {
+      if (editor && editorMode === "rich") {
         const previousDocument = editor.state.doc;
         suppressEditorUpdateRef.current = true;
         editor.commands.insertContentAt(range, result.replacementMarkdown, {
@@ -395,10 +418,12 @@ function LoadedPageView({
           editor.state.doc.content,
         );
         if (changedFrom !== null && changedTo) {
-          showPageQuickEditSuggestion(editor, {
+          const suggestionRange = {
             from: changedFrom,
             to: changedTo.b,
-          });
+          };
+          showPageQuickEditSuggestion(editor, suggestionRange);
+          editor.commands.setTextSelection(suggestionRange);
         }
         next = editor.getMarkdown();
         editorBaselineRef.current = next;
@@ -429,6 +454,14 @@ function LoadedPageView({
         replacementMarkdown: result.replacementMarkdown,
         selection: range,
       });
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setQuickEditError(
+          error instanceof Error
+            ? error.message
+            : "Heydesk could not rewrite this selection.",
+        );
+      }
     } finally {
       setQuickEditLoading(false);
       abortQuickEditRef.current = undefined;
@@ -438,7 +471,7 @@ function LoadedPageView({
   const discardQuickEdit = () => {
     if (!quickEditPreview) return;
     setCurrentContent(quickEditPreview.originalContent, "saved");
-    if (editor && page.editorMode === "rich") {
+    if (editor && editorMode === "rich") {
       suppressEditorUpdateRef.current = true;
       clearPageQuickEditSuggestion(editor);
       editor.commands.setContent(quickEditPreview.originalContent, {
@@ -450,17 +483,37 @@ function LoadedPageView({
     } else {
       setSourceSelection(quickEditPreview.selection);
     }
+    setQuickEditError(undefined);
     setQuickEditPreview(null);
   };
 
   const applyQuickEdit = async () => {
-    await saveNow("quick-edit");
-    if (editor) clearPageQuickEditSuggestion(editor);
-    sourceEditorRef.current?.blur();
-    setQuickEditPreview(null);
+    setQuickEditError(undefined);
+    try {
+      await saveNow("quick-edit");
+      if (editor) clearPageQuickEditSuggestion(editor);
+      sourceEditorRef.current?.blur();
+      setQuickEditPreview(null);
+    } catch (error) {
+      setQuickEditError(
+        error instanceof Error
+          ? error.message
+          : "Heydesk could not save this suggestion.",
+      );
+    }
   };
 
-  const sendPageMessage = async (message: string) => {
+  const retryQuickEdit = () => {
+    if (!quickEditPreview) return;
+    const preview = quickEditPreview;
+    discardQuickEdit();
+    void runQuickEdit(preview.command, preview.instruction, preview);
+  };
+
+  const sendPageMessage = async (
+    message: string,
+    preferences?: AssistantRunPreferences,
+  ) => {
     const saved = await saveNow();
     await session.sendMessage(message, {
       context: {
@@ -468,6 +521,7 @@ function LoadedPageView({
         path: page.path,
         expectedRevision: saved.revision,
       },
+      preferences,
     });
   };
 
@@ -486,38 +540,26 @@ function LoadedPageView({
   };
 
   return (
-    <div className="flex size-full min-w-0">
+    <div className="relative flex size-full min-w-0">
       <section
         className={`relative min-w-0 flex-1 overflow-y-auto bg-background ${isPageRun ? "ring-1 ring-inset ring-primary/20" : ""}`}
         data-edit-origin={isPageRun ? `codex:${session.state.activeRun?.id}` : "user"}
       >
-        <div className="sticky top-0 z-10 flex h-10 items-center justify-between border-b bg-background/90 px-5 text-xs text-muted-foreground backdrop-blur">
-          <span>{saveLabel(saveState, isPageRun)}</span>
-          <div className="flex items-center gap-1">
-            {page.editorMode === "source" && (
-              <span className="mr-2 rounded-full bg-muted px-2 py-1">Source</span>
-            )}
-            {!railOpen && (
-              <Button
-                aria-label="Open assistant"
-                onClick={() => setRailOpen(true)}
-                size="icon-sm"
-                variant="ghost"
-              >
-                <PanelRightOpenIcon />
-              </Button>
-            )}
-            <Button
-              aria-label="Open page assistant"
-              className="lg:hidden"
-              onClick={() => setMobileRailOpen(true)}
-              size="icon-sm"
-              variant="ghost"
-            >
-              <PanelRightOpenIcon />
-            </Button>
-          </div>
-        </div>
+        {editorMode === "rich" && editor ? (
+          <EditorToolbar
+            disabled={editorLocked}
+            editor={editor}
+            isPageRun={isPageRun}
+            onOpenMobileAssistant={() => setMobileRailOpen(true)}
+            saveState={saveState}
+          />
+        ) : (
+          <SourceToolbar
+            isPageRun={isPageRun}
+            onOpenMobileAssistant={() => setMobileRailOpen(true)}
+            saveState={saveState}
+          />
+        )}
 
         {conflict && (
           <div className="mx-auto mt-6 flex max-w-3xl items-center justify-between gap-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
@@ -551,40 +593,54 @@ function LoadedPageView({
           </div>
         )}
 
-        {page.editorMode === "rich" && editor && (
-          <EditorToolbar disabled={editorLocked} editor={editor} />
-        )}
-
         <div className="mx-auto w-full max-w-3xl px-8 py-10">
-          {page.editorMode === "rich" && editor ? (
+          {editorMode === "rich" && editor ? (
             <>
               <BubbleMenu
                 editor={editor}
                 shouldShow={({ editor: currentEditor }) =>
-                  !currentEditor.state.selection.empty && !editorLocked
+                  quickEditLoading ||
+                  !!quickEditPreview ||
+                  (!currentEditor.state.selection.empty && !editorLocked)
                 }
               >
                 <QuickEditMenu
+                  error={quickEditError}
                   editor={editor}
                   loading={quickEditLoading}
+                  onApply={() => void applyQuickEdit()}
+                  onCancel={() => abortQuickEditRef.current?.abort()}
+                  onDiscard={discardQuickEdit}
+                  onOpenAi={() => setQuickEditError(undefined)}
                   onSelect={(command, instruction) =>
                     void runQuickEdit(command, instruction)
                   }
+                  onTryAgain={retryQuickEdit}
+                  preview={!!quickEditPreview}
                 />
               </BubbleMenu>
               <EditorContent editor={editor} />
             </>
           ) : (
             <>
-              <div className="mb-3 flex justify-end">
-                <QuickEditMenu
-                  disabled={sourceSelection.from === sourceSelection.to}
-                  loading={quickEditLoading}
-                  onSelect={(command, instruction) =>
-                    void runQuickEdit(command, instruction)
-                  }
-                />
-              </div>
+              {sourceSelection.from !== sourceSelection.to && (
+                <div className="mb-3 flex justify-end">
+                  <QuickEditMenu
+                    disabled={session.isRunning}
+                    error={quickEditError}
+                    loading={quickEditLoading}
+                    onApply={() => void applyQuickEdit()}
+                    onCancel={() => abortQuickEditRef.current?.abort()}
+                    onDiscard={discardQuickEdit}
+                    onOpenAi={() => setQuickEditError(undefined)}
+                    onSelect={(command, instruction) =>
+                      void runQuickEdit(command, instruction)
+                    }
+                    onTryAgain={retryQuickEdit}
+                    preview={!!quickEditPreview}
+                  />
+                </div>
+              )}
               <Textarea
                 className="min-h-[calc(100svh-11rem)] resize-none rounded-none border-0 bg-transparent font-mono text-sm leading-7 shadow-none selection:bg-primary/25 focus-visible:ring-0"
                 disabled={isPageRun || quickEditLoading}
@@ -599,55 +655,24 @@ function LoadedPageView({
           )}
         </div>
 
-        {(quickEditLoading || quickEditPreview) && (
-          <div className="sticky bottom-5 z-20 mx-auto flex w-fit items-center gap-2 rounded-full border bg-background/95 px-2 py-2 shadow-lg backdrop-blur">
-            {quickEditLoading ? (
-              <>
-                <LoaderCircleIcon className="ml-2 size-4 animate-spin text-primary" />
-                <span className="px-2 text-sm">Rewriting selection</span>
-                <Button
-                  aria-label="Cancel quick edit"
-                  onClick={() => abortQuickEditRef.current?.abort()}
-                  size="icon-sm"
-                  variant="ghost"
-                >
-                  <XIcon />
-                </Button>
-              </>
-            ) : quickEditPreview ? (
-              <>
-                <span className="rounded-full bg-primary/15 px-3 py-1 text-sm text-primary-foreground dark:text-primary">
-                  Suggested edit
-                </span>
-                <Button onClick={() => void applyQuickEdit()} size="sm">
-                  <CheckIcon /> Accept
-                </Button>
-                <Button onClick={discardQuickEdit} size="sm" variant="outline">
-                  <XIcon /> Discard
-                </Button>
-                <Button
-                  onClick={() => {
-                    const preview = quickEditPreview;
-                    discardQuickEdit();
-                    void runQuickEdit(
-                      preview.command,
-                      preview.instruction,
-                      preview,
-                    );
-                  }}
-                  size="sm"
-                  variant="ghost"
-                >
-                  <RotateCcwIcon /> Try again
-                </Button>
-              </>
-            ) : null}
-          </div>
-        )}
       </section>
+
+      {!railOpen && (
+        <Button
+          aria-label="Open page assistant"
+          className="absolute right-0 top-1 z-30 hidden h-10 w-8 rounded-l-lg rounded-r-none border-r-0 bg-background shadow-sm lg:inline-flex"
+          onClick={() => setRailOpen(true)}
+          size="icon"
+          title="Open page assistant"
+          variant="outline"
+        >
+          <PanelRightOpenIcon />
+        </Button>
+      )}
 
       <AssistantRail
         disabled={!!quickEditPreview || quickEditLoading}
+        minimalHeader
         mobileOpen={mobileRailOpen}
         onMobileOpenChange={setMobileRailOpen}
         onOpenChange={setRailOpen}
@@ -664,103 +689,291 @@ function LoadedPageView({
 
 function QuickEditMenu({
   disabled = false,
+  error,
   editor,
   loading,
+  onApply,
+  onCancel,
+  onDiscard,
+  onOpenAi,
   onSelect,
+  onTryAgain,
+  preview,
 }: {
   disabled?: boolean;
+  error?: string;
   editor?: Editor;
   loading: boolean;
+  onApply: () => void;
+  onCancel: () => void;
+  onDiscard: () => void;
+  onOpenAi: () => void;
   onSelect: (command: QuickEditCommand, instruction?: string) => void;
+  onTryAgain: () => void;
+  preview: boolean;
 }) {
-  const [customOpen, setCustomOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
-  return (
-    <div className="relative flex items-center gap-1 rounded-xl border bg-background p-1 shadow-md">
-      {editor && (
-        <>
-          <Button
-            aria-label="Bold"
-            className={editor.isActive("bold") ? "bg-accent" : undefined}
-            onClick={() => editor.chain().focus().toggleBold().run()}
-            size="icon-sm"
-            type="button"
-            variant="ghost"
-          >
-            <strong>B</strong>
-          </Button>
-          <Button
-            aria-label="Italic"
-            className={editor.isActive("italic") ? "bg-accent" : undefined}
-            onClick={() => editor.chain().focus().toggleItalic().run()}
-            size="icon-sm"
-            type="button"
-            variant="ghost"
-          >
-            <em>I</em>
-          </Button>
-          <span className="mx-1 h-5 w-px bg-border" />
-        </>
-      )}
-      <SparklesIcon className="mx-1 size-4 text-primary" />
-      {[
-        ["improve", "Improve"],
-        ["shorten", "Shorten"],
-        ["summarize", "Summarize"],
-        ["fix-grammar", "Fix grammar"],
-      ].map(([command, label]) => (
+
+  if (loading) {
+    return (
+      <div className="flex w-72 items-center gap-3 rounded-xl border bg-background px-3 py-2.5 shadow-lg">
+        <LoaderCircleIcon className="size-4 animate-spin text-primary" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium">Thinking…</p>
+          <p className="truncate text-xs text-muted-foreground">
+            Rewriting the selected text
+          </p>
+        </div>
         <Button
-          disabled={disabled || loading}
-          key={command}
-          onClick={() => onSelect(command as QuickEditCommand)}
-          size="sm"
+          aria-label="Cancel quick edit"
+          onClick={onCancel}
+          size="icon-sm"
           type="button"
           variant="ghost"
         >
-          {label}
+          <XIcon />
         </Button>
-      ))}
+      </div>
+    );
+  }
+
+  if (preview) {
+    return (
+      <div className="w-64 overflow-hidden rounded-xl border bg-background p-1 shadow-lg">
+        <div className="flex items-center gap-2 px-2 py-2 text-xs font-medium text-muted-foreground">
+          <SparklesIcon className="size-3.5 text-primary" />
+          Suggested edit
+        </div>
+        {error && (
+          <p className="mx-1 mb-1 rounded-lg bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+            {error}
+          </p>
+        )}
+        <QuickEditAction
+          icon={CheckIcon}
+          label="Accept"
+          onClick={() => {
+            setAiOpen(false);
+            onApply();
+          }}
+        />
+        <QuickEditAction
+          icon={XIcon}
+          label="Discard"
+          onClick={() => {
+            setAiOpen(false);
+            onDiscard();
+          }}
+        />
+        <QuickEditAction
+          icon={RotateCcwIcon}
+          label="Try again"
+          onClick={onTryAgain}
+        />
+      </div>
+    );
+  }
+
+  if (aiOpen) {
+    const submitInstruction = () => {
+      const nextInstruction = instruction.trim();
+      if (!nextInstruction) return;
+      onSelect("custom", nextInstruction);
+    };
+
+    return (
+      <div className="w-80 overflow-hidden rounded-xl border bg-background shadow-lg">
+        <div className="flex h-11 items-center gap-2 border-b px-2">
+          <SparklesIcon className="ml-1 size-4 shrink-0 text-primary" />
+          <Input
+            autoFocus
+            className="h-9 flex-1 rounded-none border-0 bg-transparent px-1 shadow-none focus-visible:border-transparent focus-visible:ring-0"
+            disabled={disabled}
+            onChange={(event) => setInstruction(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                submitInstruction();
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setAiOpen(false);
+              }
+            }}
+            placeholder="Ask AI anything…"
+            value={instruction}
+          />
+          <Button
+            aria-label="Rewrite with this instruction"
+            disabled={disabled || !instruction.trim()}
+            onClick={submitInstruction}
+            size="icon-sm"
+            type="button"
+            variant="ghost"
+          >
+            <SendHorizontalIcon />
+          </Button>
+        </div>
+        {error && (
+          <p className="border-b px-3 py-2 text-xs text-destructive">
+            {error}
+          </p>
+        )}
+        <div className="p-1">
+          <QuickEditAction
+            disabled={disabled}
+            icon={WandSparklesIcon}
+            label="Improve writing"
+            onClick={() => onSelect("improve")}
+          />
+          <QuickEditAction
+            disabled={disabled}
+            icon={ListMinusIcon}
+            label="Make shorter"
+            onClick={() => onSelect("shorten")}
+          />
+          <QuickEditAction
+            disabled={disabled}
+            icon={ListCollapseIcon}
+            label="Summarize"
+            onClick={() => onSelect("summarize")}
+          />
+          <QuickEditAction
+            disabled={disabled}
+            icon={SpellCheck2Icon}
+            label="Fix spelling & grammar"
+            onClick={() => onSelect("fix-grammar")}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-0.5 rounded-xl border bg-background p-1 shadow-md">
       <Button
-        disabled={disabled || loading}
-        onClick={() => setCustomOpen((open) => !open)}
+        disabled={disabled}
+        onClick={() => {
+          onOpenAi();
+          setAiOpen(true);
+        }}
         size="sm"
         type="button"
         variant="ghost"
       >
-        Custom <ChevronRightIcon />
+        <SparklesIcon className="text-primary" />
+        Ask AI
       </Button>
-      {customOpen && (
-        <div className="absolute right-0 top-full z-30 mt-2 w-72 rounded-xl border bg-background p-3 shadow-lg">
-          <Textarea
-            autoFocus
-            className="min-h-20 rounded-lg bg-transparent"
-            onChange={(event) => setInstruction(event.target.value)}
-            placeholder="Describe the change…"
-            value={instruction}
-          />
-          <Button
-            className="mt-2 w-full"
-            disabled={!instruction.trim()}
-            onClick={() => {
-              onSelect("custom", instruction.trim());
-              setCustomOpen(false);
-            }}
-            size="sm"
-          >
-            Rewrite selection
-          </Button>
-        </div>
+      {editor && (
+        <>
+          <span className="mx-1 h-5 w-px bg-border" />
+          <RichSelectionToolbar editor={editor} />
+        </>
       )}
     </div>
+  );
+}
+
+function RichSelectionToolbar({ editor }: { editor: Editor }) {
+  const state = useEditorState({
+    editor,
+    selector: ({ editor: current }) => ({
+      bold: current.isActive("bold"),
+      italic: current.isActive("italic"),
+      underline: current.isActive("underline"),
+      strike: current.isActive("strike"),
+      code: current.isActive("code"),
+    }),
+  });
+  const actions = [
+    {
+      active: state.bold,
+      icon: BoldIcon,
+      label: "Bold",
+      run: () => editor.chain().focus().toggleBold().run(),
+    },
+    {
+      active: state.italic,
+      icon: ItalicIcon,
+      label: "Italic",
+      run: () => editor.chain().focus().toggleItalic().run(),
+    },
+    {
+      active: state.underline,
+      icon: UnderlineIcon,
+      label: "Underline",
+      run: () => editor.chain().focus().toggleUnderline().run(),
+    },
+    {
+      active: state.strike,
+      icon: StrikethroughIcon,
+      label: "Strikethrough",
+      run: () => editor.chain().focus().toggleStrike().run(),
+    },
+    {
+      active: state.code,
+      icon: Code2Icon,
+      label: "Inline code",
+      run: () => editor.chain().focus().toggleCode().run(),
+    },
+  ];
+
+  return actions.map(({ active, icon: Icon, label, run }) => (
+    <Button
+      aria-label={label}
+      className={active ? "bg-accent text-accent-foreground" : undefined}
+      key={label}
+      onClick={run}
+      onMouseDown={(event) => event.preventDefault()}
+      size="icon-sm"
+      title={label}
+      type="button"
+      variant="ghost"
+    >
+      <Icon />
+    </Button>
+  ));
+}
+
+function QuickEditAction({
+  disabled = false,
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  disabled?: boolean;
+  icon: typeof CheckIcon;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      className="w-full justify-start font-normal"
+      disabled={disabled}
+      onClick={onClick}
+      size="sm"
+      type="button"
+      variant="ghost"
+    >
+      <Icon className="text-muted-foreground" />
+      {label}
+    </Button>
   );
 }
 
 function EditorToolbar({
   disabled,
   editor,
+  isPageRun,
+  onOpenMobileAssistant,
+  saveState,
 }: {
   disabled: boolean;
   editor: Editor;
+  isPageRun: boolean;
+  onOpenMobileAssistant: () => void;
+  saveState: SaveState;
 }) {
   const state = useEditorState({
     editor,
@@ -786,7 +999,7 @@ function EditorToolbar({
     active ? "bg-accent text-accent-foreground" : "text-muted-foreground";
 
   return (
-    <div className="sticky top-10 z-10 border-b bg-background/95 px-4 py-2 backdrop-blur">
+    <div className="sticky top-0 z-10 border-b bg-background/95 px-4 py-2 backdrop-blur">
       <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-1">
         <Button
           aria-label="Paragraph"
@@ -971,8 +1184,75 @@ function EditorToolbar({
         >
           <Redo2Icon />
         </Button>
+        <SaveStatus isPageRun={isPageRun} state={saveState} />
+        <MobileAssistantOpenControl onOpen={onOpenMobileAssistant} />
       </div>
     </div>
+  );
+}
+
+function SourceToolbar({
+  isPageRun,
+  onOpenMobileAssistant,
+  saveState,
+}: {
+  isPageRun: boolean;
+  onOpenMobileAssistant: () => void;
+  saveState: SaveState;
+}) {
+  return (
+    <div className="sticky top-0 z-10 flex min-h-12 items-center border-b bg-background/95 px-5 backdrop-blur">
+      <span className="rounded-lg bg-muted px-2 py-1 text-xs text-muted-foreground">
+        Source
+      </span>
+      <div className="flex-1" />
+      <SaveStatus isPageRun={isPageRun} state={saveState} />
+      <MobileAssistantOpenControl onOpen={onOpenMobileAssistant} />
+    </div>
+  );
+}
+
+function MobileAssistantOpenControl({ onOpen }: { onOpen: () => void }) {
+  return (
+    <Button
+      aria-label="Open page assistant"
+      className="lg:hidden"
+      onClick={onOpen}
+      size="icon-sm"
+      variant="ghost"
+    >
+      <PanelRightOpenIcon />
+    </Button>
+  );
+}
+
+function SaveStatus({
+  isPageRun,
+  state,
+}: {
+  isPageRun: boolean;
+  state: SaveState;
+}) {
+  const saving = isPageRun || state === "saving";
+  const label = saveLabel(state, isPageRun);
+
+  return (
+    <span
+      aria-live="polite"
+      className="ml-1 inline-flex min-w-16 items-center justify-end gap-1.5 text-xs text-muted-foreground"
+      title={label}
+    >
+      {saving ? (
+        <LoaderCircleIcon className="size-3.5 animate-spin text-primary" />
+      ) : state === "saved" ? (
+        <CheckIcon className="size-3.5 animate-in zoom-in-75 text-primary duration-200" />
+      ) : state === "conflict" ? (
+        <AlertCircleIcon className="size-3.5 text-destructive" />
+      ) : (
+        <span className="size-2 rounded-full bg-amber-500" aria-hidden="true" />
+      )}
+      <span>{label}</span>
+    </span>
   );
 }
 

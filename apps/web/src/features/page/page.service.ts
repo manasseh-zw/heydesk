@@ -15,6 +15,16 @@ export async function listPages(
   return request(`/api/workspaces/${encodeURIComponent(workspaceId)}/pages`);
 }
 
+export async function createPage(
+  workspaceId: string,
+  name: string,
+): Promise<Page> {
+  return request(`/api/workspaces/${encodeURIComponent(workspaceId)}/pages`, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
 export async function getPage(
   workspaceId: string,
   path: string,
