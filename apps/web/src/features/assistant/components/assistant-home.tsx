@@ -26,8 +26,12 @@ import {
   Reasoning,
   ReasoningTrigger,
 } from "@/components/ai/reasoning";
-import { HomeComposer } from "@/features/workspace/components/home-composer";
+import {
+  HomeComposer,
+  type ComposerContext,
+} from "@/features/workspace/components/home-composer";
 import type { WorkspaceSummary } from "@/features/workspace/workspace.types";
+import type { AssistantRunPreferences } from "../assistant.types";
 import {
   getAssistantReadiness,
   startAssistantLogin,
@@ -40,8 +44,12 @@ import { RenderAssistantMessage } from "./render-assistant-message";
 type AssistantHomeProps = {
   workspace: WorkspaceSummary;
   onOpenPage: (path: string) => void;
-  onSend?: (message: string) => Promise<void>;
+  onSend?: (
+    message: string,
+    preferences?: AssistantRunPreferences,
+  ) => Promise<void>;
   compactSurface?: boolean;
+  composerContext?: ComposerContext;
   disabled?: boolean;
 };
 
@@ -50,6 +58,7 @@ export function AssistantHome({
   onOpenPage,
   onSend,
   compactSurface = false,
+  composerContext = "workspace",
   disabled = false,
 }: AssistantHomeProps) {
   const session = useAssistantSession();
@@ -59,7 +68,10 @@ export function AssistantHome({
   const readiness = session.readiness;
   const canSend = readiness?.status === "ready" && !disabled;
   const waitingForFirstAssistantPart = session.waitingForFirstAssistantPart;
-  const sendMessage = onSend ?? session.sendMessage;
+  const sendMessage =
+    onSend ??
+    ((message: string, preferences?: AssistantRunPreferences) =>
+      session.sendMessage(message, { preferences }));
 
   if (!hasMessages) {
     return (
@@ -69,6 +81,7 @@ export function AssistantHome({
         <div className="flex w-full flex-col items-center">
           <HomeComposer
             compact={compactSurface}
+            context={composerContext}
             disabled={!canSend}
             isRunning={isRunning}
             onStop={session.stop}
@@ -190,10 +203,13 @@ export function AssistantHome({
         <ConversationScrollButton className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border bg-background p-2 shadow-sm data-[at-bottom=true]:hidden" />
       </Conversation>
 
-      <div className={`shrink-0 bg-background/95 pt-3 backdrop-blur ${compactSurface ? "px-3 pb-3" : "px-6 pb-6"}`}>
+      <div
+        className={`relative z-10 shrink-0 border-t border-border/40 bg-background/90 pt-3 backdrop-blur-xl before:pointer-events-none before:absolute before:inset-x-0 before:-top-8 before:h-8 before:bg-gradient-to-t before:from-background/95 before:to-transparent ${compactSurface ? "px-3 pb-3" : "px-6 pb-5"}`}
+      >
         <div className="mx-auto max-w-3xl">
           <HomeComposer
             compact
+            context={composerContext}
             disabled={!canSend}
             isRunning={isRunning}
             onStop={session.stop}

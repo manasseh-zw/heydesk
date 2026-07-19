@@ -139,7 +139,7 @@ describe("Heydesk TanStack connection adapter", () => {
     const connection = createHeydeskConnection("workspace-1", () => ({
       context: {
         kind: "page",
-        path: "Notes.md",
+        path: "pages/Notes.md",
         expectedRevision: "a".repeat(64),
       },
       preferences: {
@@ -165,7 +165,10 @@ describe("Heydesk TanStack connection adapter", () => {
     expect(requestBody).toMatchObject({
       runId: "run-page",
       message: "Improve this page",
-      context: { path: "Notes.md", expectedRevision: "a".repeat(64) },
+      context: {
+        path: "pages/Notes.md",
+        expectedRevision: "a".repeat(64),
+      },
       preferences: {
         model: "gpt-5.6-luna",
         effort: "low",

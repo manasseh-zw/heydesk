@@ -933,6 +933,7 @@ function useSuggestionsAnchor(
 }
 
 export function ComposerSuggestions({
+  fitContent = false,
   renderItem,
   renderEmpty,
   renderLoading,
@@ -941,6 +942,7 @@ export function ComposerSuggestions({
   className,
   ...props
 }: Omit<React.ComponentProps<"div">, "children"> & {
+  fitContent?: boolean;
   renderItem?: (
     item: ComposerItem,
     state: {
@@ -993,7 +995,8 @@ export function ComposerSuggestions({
           ? {
               position: "fixed",
               left: anchor.left,
-              width: anchor.width,
+              width: fitContent ? "max-content" : anchor.width,
+              maxWidth: anchor.width,
               ...(anchor.placement === "top"
                 ? {
                     bottom: window.innerHeight - anchor.top + SUGGESTIONS_GAP,
@@ -1007,8 +1010,8 @@ export function ComposerSuggestions({
         "data-[placement=top]:origin-bottom",
         "data-[placement=bottom]:origin-top",
         "max-h-72 overflow-y-auto",
-        "flex flex-col p-1 gap-0.5",
-        "rounded-2xl border border-border bg-surface-elevated shadow-lg",
+        "flex flex-col gap-0.5 p-1",
+        "rounded-xl border border-border bg-surface-elevated shadow-lg",
         "transition-[opacity,transform] duration-100",
         className,
       )}
@@ -1199,7 +1202,7 @@ function DefaultRow({
   return (
     <div
       className={cn(
-        "flex items-center gap-2.5 px-3 py-1.5 rounded text-sm",
+        "flex items-center gap-2.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm",
         highlighted ? "bg-accent text-foreground" : "text-foreground",
         item.disabled && "opacity-50",
       )}

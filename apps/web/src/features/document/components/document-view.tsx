@@ -24,9 +24,9 @@ import {
 import "@eigenpal/docx-editor-react/styles.css";
 
 import { Button } from "@heydesk/ui/components/button";
-import { useTheme } from "@/components/theme-provider";
 import { AssistantRail } from "@/features/assistant/components/assistant-rail";
 import { useAssistantSession } from "@/features/assistant/assistant-session";
+import type { AssistantRunPreferences } from "@/features/assistant/assistant.types";
 import {
   claimDocumentTool,
   respondToDocumentTool,
@@ -116,7 +116,6 @@ export function DocumentView({
   const handledToolCallsRef = useRef(new Set<string>());
   const toolChainRef = useRef(Promise.resolve());
   const session = useAssistantSession();
-  const { resolvedTheme } = useTheme();
   const { executeToolCall } = useDocxAgentTools({
     editorRef,
     author: "Heydesk",
@@ -400,7 +399,10 @@ export function DocumentView({
     workspace.id,
   ]);
 
-  const sendDocumentMessage = async (message: string) => {
+  const sendDocumentMessage = async (
+    message: string,
+    preferences?: AssistantRunPreferences,
+  ) => {
     await flush();
     const current = loadedRef.current;
     if (!current) return;
@@ -410,6 +412,7 @@ export function DocumentView({
         path,
         expectedRevision: current.revision,
       },
+      preferences,
     });
   };
 
@@ -430,10 +433,11 @@ export function DocumentView({
           ref={editorRef}
           author="Heydesk user"
           className="size-full"
-          colorMode={resolvedTheme === "dark" ? "dark" : "light"}
+          colorMode="light"
           documentBuffer={loaded.buffer}
           documentName={loaded.name}
           documentNameEditable={false}
+          initialZoom={0.9}
           mode={session.isRunning ? "viewing" : "editing"}
           onChange={() => {
             if (suppressChangesRef.current) return;
@@ -486,6 +490,7 @@ export function DocumentView({
         )}
       </section>
       <AssistantRail
+        composerContext="document"
         disabled={status === "conflict"}
         mobileOpen={mobileRailOpen}
         onMobileOpenChange={setMobileRailOpen}

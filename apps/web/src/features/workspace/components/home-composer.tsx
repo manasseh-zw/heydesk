@@ -1,16 +1,24 @@
+import { useQuery } from "@tanstack/react-query";
 import {
   ArrowUpIcon,
+  BookOpenTextIcon,
+  CheckIcon,
+  ChevronDownIcon,
   FileTextIcon,
   MessageSquareIcon,
-  MicIcon,
-  PaperclipIcon,
-  PlusIcon,
-  SquareIcon,
+  ScanSearchIcon,
   SparklesIcon,
-  WrenchIcon,
+  SquareIcon,
+  TextQuoteIcon,
 } from "lucide-react";
 
 import { Button } from "@heydesk/ui/components/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@heydesk/ui/components/dropdown-menu";
 
 import {
   Composer,
@@ -24,53 +32,141 @@ import {
   type ComposerItem,
   type ComposerValue,
 } from "@/components/ai/composer-rich";
+import { CodexIcon } from "@/components/icons";
 import { LogoMark } from "@/components/logo";
+import { assistantKeys } from "@/features/assistant/assistant.queries";
+import { getAssistantModels } from "@/features/assistant/assistant.service";
+import type {
+  AssistantModel,
+  AssistantRunPreferences,
+} from "@/features/assistant/assistant.types";
 import { useState } from "react";
 
-const commands: ComposerItem[] = [
-  {
-    id: "create-page",
-    label: "Create a page",
-    description: "Turn an idea into an editable page",
-    icon: <SparklesIcon />,
-  },
-  {
-    id: "summarize",
-    label: "Summarize",
-    description: "Condense selected workspace context",
-    icon: <MessageSquareIcon />,
-  },
-  {
-    id: "draft-document",
-    label: "Draft a page",
-    description: "Create a durable Markdown page from your instructions",
-    icon: <FileTextIcon />,
-  },
-];
+export type ComposerContext = "workspace" | "page" | "document";
+
+const commandsByContext = {
+  workspace: [
+    { id: "create-page", label: "Create a page", icon: <SparklesIcon /> },
+    {
+      id: "create-document",
+      label: "Create a document",
+      icon: <FileTextIcon />,
+    },
+    {
+      id: "summarize-workspace",
+      label: "Summarize my workspace",
+      icon: <MessageSquareIcon />,
+    },
+  ],
+  page: [
+    {
+      id: "summarize-page",
+      label: "Summarize this page",
+      icon: <BookOpenTextIcon />,
+    },
+    {
+      id: "improve-page",
+      label: "Improve this page",
+      icon: <SparklesIcon />,
+    },
+    {
+      id: "make-page-concise",
+      label: "Make this more concise",
+      icon: <TextQuoteIcon />,
+    },
+    {
+      id: "find-page-gaps",
+      label: "Find gaps in this page",
+      icon: <ScanSearchIcon />,
+    },
+  ],
+  document: [
+    {
+      id: "summarize-document",
+      label: "Summarize this document",
+      icon: <BookOpenTextIcon />,
+    },
+    {
+      id: "improve-document",
+      label: "Improve the writing",
+      icon: <SparklesIcon />,
+    },
+    {
+      id: "review-document-structure",
+      label: "Review the structure",
+      icon: <ScanSearchIcon />,
+    },
+    {
+      id: "make-document-concise",
+      label: "Make this more concise",
+      icon: <TextQuoteIcon />,
+    },
+  ],
+} satisfies Record<ComposerContext, ComposerItem[]>;
 
 type HomeComposerProps = {
   compact?: boolean;
+  context?: ComposerContext;
   disabled?: boolean;
   isRunning?: boolean;
   onStop?: () => void;
-  onSubmit?: (text: string) => void | Promise<void>;
+  onSubmit?: (
+    text: string,
+    preferences?: AssistantRunPreferences,
+  ) => void | Promise<void>;
 };
 
 const emptyValue: ComposerValue = { text: "", segments: [] };
+const codexModels = [
+  {
+    id: "gpt-5.6-luna",
+    label: "Luna",
+  },
+  {
+    id: "gpt-5.6-terra",
+    label: "Terra",
+  },
+  {
+    id: "gpt-5.6-sol",
+    label: "Sol",
+  },
+] as const;
+
+type CodexModelId = (typeof codexModels)[number]["id"];
 
 export function HomeComposer({
   compact = false,
+  context = "workspace",
   disabled = false,
   isRunning = false,
   onStop,
   onSubmit,
 }: HomeComposerProps) {
   const [value, setValue] = useState<ComposerValue>(emptyValue);
+  const [selectedModelId, setSelectedModelId] =
+    useState<CodexModelId>("gpt-5.6-luna");
+  const modelsQuery = useQuery({
+    queryKey: assistantKeys.models(),
+    queryFn: getAssistantModels,
+    staleTime: 60_000,
+  });
+  const selectedModel = findModel(modelsQuery.data, selectedModelId);
+  const selectedModelLabel = codexModels.find(
+    (model) => model.id === selectedModelId,
+  )!.label;
 
   const submit = (next: ComposerValue) => {
     const text = next.text.trim();
     if (!text || !onSubmit) return;
-    void onSubmit(text);
+    void onSubmit(
+      text,
+      selectedModel
+        ? {
+            model: selectedModel.model,
+            effort: selectedModel.defaultReasoningEffort,
+          }
+        : undefined,
+    );
     setValue(emptyValue);
   };
 
@@ -79,18 +175,25 @@ export function HomeComposer({
       className={
         compact
           ? "w-full max-w-3xl"
-          : "flex w-full max-w-2xl -translate-y-8 flex-col items-center md:-translate-y-12"
+          : "flex w-full max-w-2xl -translate-y-8 flex-col items-start md:-translate-y-12"
       }
     >
-      {!compact && <LogoMark className="size-10 text-logo-mark" />}
       {!compact && (
-        <h1 className="mt-5 font-brand text-2xl font-light tracking-tight">
-          Create something wonderful
-        </h1>
+        <div className="w-full px-2">
+          <div className="flex items-center gap-2">
+            <LogoMark className="size-6.5 shrink-0 text-logo-mark" />
+            <span className="font-brand text-3xl font-light tracking-tight">
+              Heydesk
+            </span>
+          </div>
+          <p className="mt-2 text-sm font-brand leading-6 text-foreground/70 md:whitespace-nowrap">
+            Turn your workspace context into useful work with Codex
+          </p>
+        </div>
       )}
 
       <Composer
-        className={`${compact ? "" : "mt-8"} w-full rounded-4xl border border-border/60 shadow-[0_8px_24px_-16px_rgba(15,23,42,0.18)] focus-within:border-primary/25 focus-within:ring-1 focus-within:ring-primary/20 dark:border-border/70 dark:shadow-[0_8px_24px_-16px_rgba(0,0,0,0.45)]`}
+        className={`${compact ? "rounded-2xl" : "mt-6 rounded-3xl"} w-full border border-border/60 shadow-[0_8px_24px_-16px_rgba(15,23,42,0.18)] focus-within:border-primary/25 focus-within:ring-1 focus-within:ring-primary/20 dark:border-border/70 dark:shadow-[0_8px_24px_-16px_rgba(0,0,0,0.45)]`}
         disabled={disabled}
       >
         <ComposerRichInput
@@ -100,42 +203,63 @@ export function HomeComposer({
           onValueChange={setValue}
           placeholder="Ask Heydesk anything. Type / for actions."
           triggers={{
-            "/": { items: commands },
+            "/": { items: commandsByContext[context] },
           }}
           value={value}
         />
-        <ComposerSuggestions />
+        <ComposerSuggestions fitContent />
         <ComposerToolbar>
-          <Button
-            aria-label="Add attachment"
-            className="text-muted-foreground"
-            size="icon-sm"
-            variant="ghost"
+          <div
+            aria-label="Codex is active"
+            className="flex h-8 items-center gap-1.5 px-1 text-sm text-muted-foreground"
           >
-            <PlusIcon />
-          </Button>
-          <Button className="text-muted-foreground" size="sm" variant="ghost">
-            <WrenchIcon />
-            Tools
-          </Button>
+            <CodexIcon className="size-4" />
+            <span>Codex</span>
+          </div>
 
           <ComposerToolbarSpacer>
-            <Button
-              aria-label="Attach a file"
-              className="text-muted-foreground"
-              size="icon-sm"
-              variant="ghost"
-            >
-              <PaperclipIcon />
-            </Button>
-            <Button
-              aria-label="Dictate"
-              className="text-muted-foreground"
-              size="icon-sm"
-              variant="ghost"
-            >
-              <MicIcon />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    aria-label={`Choose Codex model. Current model: GPT-5.6 ${selectedModelLabel}`}
+                    className="h-7 gap-1 px-1.5 text-xs font-normal text-muted-foreground"
+                    disabled={disabled || !modelsQuery.data}
+                    size="xs"
+                    type="button"
+                    variant="ghost"
+                  />
+                }
+              >
+                GPT-5.6 {selectedModelLabel}
+                <ChevronDownIcon className="size-3" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="min-w-40 rounded-lg p-1"
+                side="top"
+              >
+                {codexModels.map((option) => {
+                  const available = findModel(modelsQuery.data, option.id);
+                  const selected = option.id === selectedModelId;
+                  return (
+                    <DropdownMenuItem
+                      className="gap-2 rounded-md px-2 py-1.5 text-xs font-normal"
+                      disabled={!available}
+                      key={option.id}
+                      onClick={() => setSelectedModelId(option.id)}
+                    >
+                      <span className="min-w-0 flex-1">
+                        GPT-5.6 {option.label}
+                      </span>
+                      {selected && (
+                        <CheckIcon className="size-3.5 text-primary" />
+                      )}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
             {isRunning ? (
               <Button
                 aria-label="Stop"
@@ -163,5 +287,14 @@ export function HomeComposer({
         </ComposerToolbar>
       </Composer>
     </div>
+  );
+}
+
+function findModel(
+  models: AssistantModel[] | undefined,
+  modelId: CodexModelId,
+): AssistantModel | undefined {
+  return models?.find(
+    (model) => model.id === modelId || model.model === modelId,
   );
 }
