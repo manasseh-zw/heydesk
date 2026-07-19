@@ -1,9 +1,14 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-  entry: "./src/index.ts",
+  entry: {
+    index: "./src/index.ts",
+    desktop: "./src/desktop.ts",
+  },
   format: "esm",
   outDir: "./dist",
   clean: true,
-  noExternal: [/@heydesk\/.*/],
+  deps: {
+    alwaysBundle: [/.*/],
+  },
 });

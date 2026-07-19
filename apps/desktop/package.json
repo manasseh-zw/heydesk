@@ -1,0 +1,33 @@
+{
+  "name": "@heydesk/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "description": "The local-first Heydesk desktop workspace.",
+  "author": "Heydesk",
+  "type": "module",
+  "main": "out/main/main.js",
+  "scripts": {
+    "build": "electron-vite build",
+    "check-types": "tsc --noEmit",
+    "dev": "pnpm --filter server build && node scripts/prepare-native.mjs current --development && pnpm run ensure:electron && electron-vite dev",
+    "ensure:electron": "node scripts/ensure-electron.mjs",
+    "package:dir": "pnpm run build && node scripts/prepare-native.mjs darwin-arm64 && electron-builder --dir --arm64 --publish never",
+    "package:mac": "pnpm run build && node scripts/prepare-native.mjs darwin-arm64 && electron-builder --mac dmg zip --arm64 --publish never",
+    "package:mac:unsigned": "pnpm run build && node scripts/prepare-native.mjs darwin-arm64 && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --arm64 --publish never -c.mac.identity=null",
+    "test": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "@heydesk/config": "workspace:*",
+    "@tailwindcss/vite": "^4.3.2",
+    "@tanstack/router-plugin": "^1.168.19",
+    "@vitejs/plugin-react": "^6.0.3",
+    "electron": "43.1.1",
+    "electron-builder": "26.15.3",
+    "electron-vite": "6.0.0-beta.1",
+    "server": "workspace:*",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "^8.1.3",
+    "vitest": "^4.1.10"
+  }
+}

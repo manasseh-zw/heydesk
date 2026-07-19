@@ -22,6 +22,7 @@ app.use(
 );
 
 app.get("/", (c) => c.text("OK"));
+app.get("/health", (c) => c.json({ status: "ok" }));
 app.route("/api/workspaces", workspaceRoutes);
 app.route("/api/workspaces", pageRoutes);
 app.route("/api/workspaces", documentRoutes);

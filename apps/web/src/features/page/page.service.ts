@@ -1,4 +1,4 @@
-import { env } from "@heydesk/env/web";
+import { getServerUrl } from "../../lib/server-url";
 
 import {
   PageRevisionConflictError,
@@ -30,7 +30,7 @@ export async function getPageIfChanged(
   revision: string,
 ): Promise<Page | null> {
   const response = await fetch(
-    `${env.VITE_SERVER_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/pages/content?path=${encodeURIComponent(path)}`,
+    `${getServerUrl()}/api/workspaces/${encodeURIComponent(workspaceId)}/pages/content?path=${encodeURIComponent(path)}`,
     {
       headers: {
         "Content-Type": "application/json",
@@ -84,7 +84,7 @@ export async function quickEditPage(
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${env.VITE_SERVER_URL}${path}`, {
+  const response = await fetch(`${getServerUrl()}${path}`, {
     headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
   });

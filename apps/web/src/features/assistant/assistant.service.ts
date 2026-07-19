@@ -1,5 +1,6 @@
-import { env } from "@heydesk/env/web";
 import type { UIMessage } from "@tanstack/ai";
+
+import { getServerUrl } from "../../lib/server-url";
 
 import type {
   AssistantConversationSnapshot,
@@ -74,7 +75,7 @@ export async function respondToAssistantInteraction(
 }
 
 export function assistantApiUrl(path: string): string {
-  return `${env.VITE_SERVER_URL}${path}`;
+  return `${getServerUrl()}${path}`;
 }
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {

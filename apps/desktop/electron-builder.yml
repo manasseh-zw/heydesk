@@ -1,0 +1,37 @@
+appId: com.heydesk.app
+productName: Heydesk
+asar: true
+
+directories:
+  output: release
+
+files:
+  - out/main/**
+  - out/preload/**
+  - package.json
+
+extraResources:
+  - from: out/renderer
+    to: renderer
+  - from: ../server/dist
+    to: server
+    filter:
+      - "*.mjs"
+  - from: resources/native
+    to: server/node_modules
+
+mac:
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  icon: resources/icon.icns
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+
+dmg:
+  artifactName: Heydesk-${version}-${arch}.${ext}
+  title: Heydesk ${version}
+
+artifactName: Heydesk-${version}-${os}-${arch}.${ext}

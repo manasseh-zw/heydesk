@@ -2,7 +2,12 @@ packages:
   - apps/*
   - packages/*
 allowBuilds:
+  electron: true
+  electron-winstaller: true
   esbuild: true
+supportedArchitectures:
+  os: [current, darwin, win32]
+  cpu: [current, arm64, x64]
 overrides:
   "@eigenpal/docx-editor-agents": 1.9.0
   "@eigenpal/docx-editor-core": 1.9.0

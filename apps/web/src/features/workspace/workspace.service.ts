@@ -1,4 +1,4 @@
-import { env } from "@heydesk/env/web";
+import { getServerUrl } from "../../lib/server-url";
 
 import type { WorkspaceOverview, WorkspaceSummary } from "./workspace.types";
 
@@ -21,7 +21,7 @@ export async function openWorkspace(path: string): Promise<WorkspaceSummary> {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${env.VITE_SERVER_URL}${path}`, {
+  const response = await fetch(`${getServerUrl()}${path}`, {
     headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
   });

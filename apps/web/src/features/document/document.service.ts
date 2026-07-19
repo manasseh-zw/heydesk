@@ -1,4 +1,4 @@
-import { env } from "@heydesk/env/web";
+import { getServerUrl } from "../../lib/server-url";
 
 import type { DocumentFile, DocumentSummary, LoadedDocument } from "./document.types";
 import { DocumentRevisionConflictError } from "./document.types";
@@ -104,11 +104,11 @@ export async function saveDocument(
 }
 
 function documentContentUrl(workspaceId: string, path: string): string {
-  return `${env.VITE_SERVER_URL}/api/workspaces/${encodeURIComponent(workspaceId)}/documents/content?path=${encodeURIComponent(path)}`;
+  return `${getServerUrl()}/api/workspaces/${encodeURIComponent(workspaceId)}/documents/content?path=${encodeURIComponent(path)}`;
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${env.VITE_SERVER_URL}${path}`, init);
+  const response = await fetch(`${getServerUrl()}${path}`, init);
   const result: unknown = await response.json();
   if (!response.ok) throw resultError(result, "Heydesk could not complete that document request.");
   return result as T;
