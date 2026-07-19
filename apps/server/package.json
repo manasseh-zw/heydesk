@@ -18,6 +18,7 @@
     "@heydesk/db": "workspace:*",
     "@heydesk/env": "workspace:*",
     "@hono/node-server": "^2.0.8",
+    "@mohtasham/md-to-docx": "2.18.0",
     "@tanstack/ai": "0.41.0",
     "dotenv": "catalog:",
     "drizzle-orm": "^0.45.2",

@@ -7,7 +7,8 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "pnpm dev:all",
+    "dev:all": "concurrently -k -n server,web -c blue,green \"pnpm dev:server\" \"pnpm dev:web\"",
     "build": "turbo run build",
     "check-types": "turbo run check-types",
     "test": "turbo run test",
@@ -33,6 +34,7 @@
   "devDependencies": {
     "@heydesk/config": "workspace:*",
     "@types/node": "catalog:",
+    "concurrently": "^9.2.1",
     "turbo": "^2.10.2",
     "typescript": "catalog:"
   },
