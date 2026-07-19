@@ -1,15 +1,22 @@
 import { Hono } from "hono";
 
+import { DocumentService } from "../document/document.service";
 import {
   WorkspaceNotFoundError,
   workspaceService,
 } from "../workspace/workspace.service";
 import {
+  convertPageToDocumentSchema,
   createPageSchema,
   pagePathSchema,
   quickEditPageSchema,
   writePageSchema,
 } from "./page.schemas";
+import {
+  PageDocumentConversionError,
+  PageDocumentConversionService,
+  UnsupportedPageConversionError,
+} from "./page-document-conversion.service";
 import { pageQuickEditService } from "./page-quick-edit.service";
 import {
   InvalidPagePathError,
@@ -21,6 +28,10 @@ import {
 
 export const pageRoutes = new Hono();
 const pageService = new PageService(workspaceService);
+const pageDocumentConversionService = new PageDocumentConversionService(
+  pageService,
+  new DocumentService(workspaceService),
+);
 
 pageRoutes.get("/:workspaceId/pages", async (c) => {
   try {
@@ -140,6 +151,54 @@ pageRoutes.put("/:workspaceId/pages/content", async (c) => {
   }
 });
 
+pageRoutes.post("/:workspaceId/pages/convert-to-document", async (c) => {
+  const input = convertPageToDocumentSchema.safeParse(
+    await readJson(c.req.raw),
+  );
+  if (!input.success) {
+    return c.json(
+      { error: input.error.issues[0]?.message ?? "Invalid page." },
+      400,
+    );
+  }
+  try {
+    const document = await pageDocumentConversionService.convert(
+      c.req.param("workspaceId"),
+      input.data,
+      c.req.raw.signal,
+    );
+    c.header("ETag", `"${document.revision}"`);
+    return c.json(document, 201);
+  } catch (error) {
+    if (error instanceof PageRevisionConflictError) {
+      return c.json(
+        {
+          code: "REVISION_CONFLICT" as const,
+          error: error.message,
+          current: error.current,
+        },
+        409,
+      );
+    }
+    if (
+      error instanceof PageNotFoundError ||
+      error instanceof WorkspaceNotFoundError
+    ) {
+      return c.json({ error: error.message }, 404);
+    }
+    if (
+      error instanceof InvalidPagePathError ||
+      error instanceof UnsupportedPageConversionError
+    ) {
+      return c.json({ error: error.message }, 400);
+    }
+    if (error instanceof PageDocumentConversionError) {
+      return c.json({ error: error.message }, 422);
+    }
+    throw error;
+  }
+});
+
 pageRoutes.post("/:workspaceId/pages/quick-edits", async (c) => {
   const input = quickEditPageSchema.safeParse(await readJson(c.req.raw));
   if (!input.success) {
@@ -179,8 +238,7 @@ pageRoutes.post("/:workspaceId/pages/quick-edits", async (c) => {
     }
     return c.json(
       {
-        error:
-          error instanceof Error ? error.message : "Quick edit failed.",
+        error: error instanceof Error ? error.message : "Quick edit failed.",
       },
       502,
     );

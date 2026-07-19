@@ -1,8 +1,7 @@
 import { Editor } from "@tiptap/core";
-import Highlight from "@tiptap/extension-highlight";
-import { Markdown } from "@tiptap/markdown";
-import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it } from "vitest";
+
+import { getPageMarkdownExtensions } from "../page-markdown";
 
 const supportedMarkdown = [
   "# Title\n\nParagraph with **bold**, *italic*, and `code`.",
@@ -17,7 +16,7 @@ describe("rich page Markdown round trips", () => {
     it(`preserves ${source.split("\n", 1)[0]}`, () => {
       const editor = new Editor({
         element: null,
-        extensions: [StarterKit, Markdown, Highlight],
+        extensions: getPageMarkdownExtensions(),
         content: source,
         contentType: "markdown",
       });
@@ -26,4 +25,29 @@ describe("rich page Markdown round trips", () => {
       editor.destroy();
     });
   }
+
+  it("renders Markdown links as recognizable external links", () => {
+    const editor = new Editor({
+      element: null,
+      extensions: getPageMarkdownExtensions(),
+      content: "Read the [source](https://example.com).",
+      contentType: "markdown",
+    });
+
+    const link = editor.extensionManager.extensions.find(
+      (extension) => extension.name === "link",
+    );
+    const linkMark = editor.getJSON().content?.[0]?.content?.[1]?.marks?.[0];
+
+    expect(linkMark).toMatchObject({
+      type: "link",
+      attrs: {
+        href: "https://example.com",
+        rel: "noopener noreferrer nofollow",
+        target: "_blank",
+      },
+    });
+    expect(link?.options.HTMLAttributes.class).toContain("underline-offset-4");
+    editor.destroy();
+  });
 });

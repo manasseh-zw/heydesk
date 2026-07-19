@@ -1,5 +1,7 @@
 import { getServerUrl } from "../../lib/server-url";
 
+import type { DocumentFile } from "../document/document.types";
+
 import {
   PageRevisionConflictError,
   type Page,
@@ -9,9 +11,7 @@ import {
   type QuickEditResult,
 } from "./page.types";
 
-export async function listPages(
-  workspaceId: string,
-): Promise<PageSummary[]> {
+export async function listPages(workspaceId: string): Promise<PageSummary[]> {
   return request(`/api/workspaces/${encodeURIComponent(workspaceId)}/pages`);
 }
 
@@ -90,6 +90,16 @@ export async function quickEditPage(
   return request(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/pages/quick-edits`,
     { method: "POST", body: JSON.stringify(input), signal },
+  );
+}
+
+export async function convertPageToDocument(
+  workspaceId: string,
+  input: { path: string; expectedRevision: string },
+): Promise<DocumentFile> {
+  return request(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/pages/convert-to-document`,
+    { method: "POST", body: JSON.stringify(input) },
   );
 }
 

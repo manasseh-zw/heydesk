@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   ChevronRight,
-  File,
   FileText,
   FileUp,
   Home,
@@ -254,7 +253,7 @@ function ContentSection({
   searchQuery,
   onItemIntent,
 }: ContentSectionProps) {
-  const ItemIcon = document ? FileText : File;
+  const ItemIcon = FileText;
   const [open, setOpen] = useState(true);
 
   useEffect(() => {
@@ -384,10 +383,11 @@ function DocumentAddMenu({
         <DropdownMenuContent
           align="end"
           className="w-40 min-w-40 rounded-xl p-1"
+          finalFocus={false}
         >
           <DropdownMenuItem
             className="gap-2 rounded-lg px-2 py-1.5 font-normal whitespace-nowrap [&_svg]:size-3.5"
-            onClick={() => requestAnimationFrame(onStartCreate)}
+            onClick={onStartCreate}
           >
             <FileText /> New document
           </DropdownMenuItem>
@@ -442,7 +442,7 @@ function InlineCreateItem({
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const ItemIcon = document ? FileText : File;
+  const ItemIcon = FileText;
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => inputRef.current?.focus());

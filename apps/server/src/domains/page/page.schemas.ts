@@ -14,6 +14,11 @@ export const writePageSchema = z.object({
   origin: z.enum(["user", "quick-edit"]),
 });
 
+export const convertPageToDocumentSchema = z.object({
+  path: z.string().trim().min(1, "Choose a page."),
+  expectedRevision: z.string().length(64),
+});
+
 export const quickEditPageSchema = z
   .object({
     path: z.string().trim().min(1),
@@ -28,7 +33,7 @@ export const quickEditPageSchema = z
     ]),
     instruction: z.string().trim().max(2_000).optional(),
   })
-  .refine(
-    (value) => value.command !== "custom" || Boolean(value.instruction),
-    { message: "Describe the custom edit.", path: ["instruction"] },
-  );
+  .refine((value) => value.command !== "custom" || Boolean(value.instruction), {
+    message: "Describe the custom edit.",
+    path: ["instruction"],
+  });

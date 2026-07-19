@@ -15,13 +15,16 @@ import {
 } from "@eigenpal/docx-editor-react";
 import { useDocxAgentTools } from "@eigenpal/docx-editor-agents/react";
 import {
+  AlertCircle,
   AlertTriangle,
-  Check,
-  LoaderCircle,
+  CheckIcon,
+  FileTextIcon,
+  LoaderCircleIcon,
   PanelRightOpenIcon,
 } from "lucide-react";
 
 import "@eigenpal/docx-editor-react/styles.css";
+import "./document-editor.css";
 
 import { Button } from "@heydesk/ui/components/button";
 import { AssistantRail } from "@/features/assistant/components/assistant-rail";
@@ -45,6 +48,13 @@ import {
 } from "../document.types";
 
 setGoogleFontsEnabled(false);
+
+const documentFontFamilies = [
+  "Calibri",
+  "Georgia",
+  "Arial",
+  "Times New Roman",
+] as const;
 
 const documentToolNames = [
   "read_document",
@@ -104,7 +114,7 @@ export function DocumentView({
   const [conflict, setConflict] = useState<DocumentFile | null>(null);
   const [railOpen, setRailOpen] = useState(true);
   const [mobileRailOpen, setMobileRailOpen] = useState(false);
-  const [railWidth, setRailWidth] = useState(380);
+  const [railWidth, setRailWidth] = useState(420);
   const editorRef = useRef<DocxEditorRef>(null);
   const loadedRef = useRef<LoadedDocument | null>(null);
   const statusRef = useRef<SaveStatus>("saved");
@@ -422,12 +432,12 @@ export function DocumentView({
   if (query.isPending || !loaded) {
     return (
       <div className="flex size-full items-center justify-center gap-2 text-sm text-muted-foreground">
-        <LoaderCircle className="size-4 animate-spin" /> Opening document…
+        <LoaderCircleIcon className="size-4 animate-spin" /> Opening document…
       </div>
     );
   }
   return (
-    <div className="flex size-full min-w-0">
+    <div className="relative flex size-full min-w-0">
       <section className="relative min-w-0 flex-1 overflow-hidden bg-muted/35">
         <DocxEditor
           ref={editorRef}
@@ -435,8 +445,7 @@ export function DocumentView({
           className="size-full"
           colorMode="light"
           documentBuffer={loaded.buffer}
-          documentName={loaded.name}
-          documentNameEditable={false}
+          fontFamilies={documentFontFamilies}
           initialZoom={0.9}
           mode={session.isRunning ? "viewing" : "editing"}
           onChange={() => {
@@ -451,28 +460,26 @@ export function DocumentView({
           showHelpMenu={false}
           showMarginGuides
           showRuler
+          renderLogo={() => (
+            <FileTextIcon
+              aria-hidden="true"
+              className="size-5 text-muted-foreground"
+            />
+          )}
           renderTitleBarRight={() => (
             <div className="flex items-center gap-1">
-              <SaveIndicator status={status} />
+              <SaveIndicator isDocumentRun={session.isRunning} status={status} />
               {!railOpen && (
                 <Button
                   aria-label="Open document assistant"
                   onClick={() => setRailOpen(true)}
                   size="icon-sm"
+                  title="Open document assistant"
                   variant="ghost"
                 >
                   <PanelRightOpenIcon />
                 </Button>
               )}
-              <Button
-                aria-label="Open document assistant"
-                className="lg:hidden"
-                onClick={() => setMobileRailOpen(true)}
-                size="icon-sm"
-                variant="ghost"
-              >
-                <PanelRightOpenIcon />
-              </Button>
             </div>
           )}
         />
@@ -489,9 +496,11 @@ export function DocumentView({
           </div>
         )}
       </section>
+
       <AssistantRail
         composerContext="document"
         disabled={status === "conflict"}
+        minimalHeader
         mobileOpen={mobileRailOpen}
         onMobileOpenChange={setMobileRailOpen}
         onOpenChange={setRailOpen}
@@ -499,7 +508,7 @@ export function DocumentView({
         onSend={sendDocumentMessage}
         onWidthChange={setRailWidth}
         open={railOpen}
-        title="Document assistant"
+        persistent
         width={railWidth}
         workspace={workspace}
       />
@@ -546,16 +555,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function SaveIndicator({ status }: { status: SaveStatus }) {
-  if (status === "saving") {
-    return <span className="flex items-center gap-1.5 text-xs"><LoaderCircle className="size-3 animate-spin" />Saving</span>;
-  }
-  if (status === "saved") {
-    return <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Check className="size-3" />Saved</span>;
-  }
+function SaveIndicator({
+  isDocumentRun,
+  status,
+}: {
+  isDocumentRun: boolean;
+  status: SaveStatus;
+}) {
+  const saving = isDocumentRun || status === "saving";
+  const label = documentSaveLabel(status, isDocumentRun);
+
   return (
-    <span className={status === "conflict" || status === "error" ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
-      {status === "unsaved" ? "Unsaved" : status === "conflict" ? "Conflict" : "Save failed"}
+    <span
+      aria-live="polite"
+      className="ml-1 inline-flex min-w-16 items-center justify-end gap-1.5 text-xs text-muted-foreground"
+      title={label}
+    >
+      {saving ? (
+        <LoaderCircleIcon className="size-3.5 animate-spin text-primary" />
+      ) : status === "saved" ? (
+        <CheckIcon className="size-3.5 animate-in zoom-in-75 text-primary duration-200" />
+      ) : status === "conflict" || status === "error" ? (
+        <AlertCircle className="size-3.5 text-destructive" />
+      ) : (
+        <span className="size-2 rounded-full bg-amber-500" aria-hidden="true" />
+      )}
+      <span>{label}</span>
     </span>
   );
+}
+
+function documentSaveLabel(
+  status: SaveStatus,
+  isDocumentRun: boolean,
+): string {
+  if (isDocumentRun) return "Codex is editing this document";
+  if (status === "saving") return "Saving…";
+  if (status === "unsaved") return "Unsaved";
+  if (status === "conflict") return "Conflict";
+  if (status === "error") return "Save failed";
+  return "Saved";
 }

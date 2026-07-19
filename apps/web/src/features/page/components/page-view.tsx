@@ -6,12 +6,9 @@ import {
   type ChangeEvent,
   type SyntheticEvent,
 } from "react";
-import { Markdown } from "@tiptap/markdown";
 import type { Editor } from "@tiptap/core";
-import Highlight from "@tiptap/extension-highlight";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
-import StarterKit from "@tiptap/starter-kit";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircleIcon,
@@ -45,12 +42,15 @@ import { Button } from "@heydesk/ui/components/button";
 import { Input } from "@heydesk/ui/components/input";
 import { Textarea } from "@heydesk/ui/components/textarea";
 
+import { CodexIcon, MicrosoftWord } from "@/components/icons";
 import { AssistantRail } from "@/features/assistant/components/assistant-rail";
 import { useAssistantSession } from "@/features/assistant/assistant-session";
 import type { AssistantRunPreferences } from "@/features/assistant/assistant.types";
+import { documentKeys } from "@/features/document/document.queries";
 import type { WorkspaceSummary } from "@/features/workspace/workspace.types";
 import { pageKeys, pageQueryOptions } from "../page.queries";
 import {
+  convertPageToDocument,
   getPageIfChanged,
   quickEditPage,
   savePage,
@@ -61,6 +61,7 @@ import {
   showPageQuickEditSuggestion,
 } from "../page-quick-edit-suggestion";
 import { resolvePageEditorMode } from "../page-editor-mode";
+import { getPageMarkdownExtensions } from "../page-markdown";
 import {
   PageRevisionConflictError,
   type Page,
@@ -80,6 +81,7 @@ type QuickEditPreview = {
 type PageViewProps = {
   path: string;
   workspace: WorkspaceSummary;
+  onOpenDocument: (path: string) => void;
   onOpenPage: (path: string) => void;
   onRegisterFlush?: (flush: (() => Promise<void>) | null) => void;
 };
@@ -87,6 +89,7 @@ type PageViewProps = {
 export function PageView({
   path,
   workspace,
+  onOpenDocument,
   onOpenPage,
   onRegisterFlush,
 }: PageViewProps) {
@@ -121,6 +124,7 @@ export function PageView({
     <LoadedPageView
       page={query.data}
       key={path}
+      onOpenDocument={onOpenDocument}
       onOpenPage={onOpenPage}
       onRegisterFlush={onRegisterFlush}
       workspace={workspace}
@@ -131,11 +135,13 @@ export function PageView({
 function LoadedPageView({
   page,
   workspace,
+  onOpenDocument,
   onOpenPage,
   onRegisterFlush,
 }: {
   page: Page;
   workspace: WorkspaceSummary;
+  onOpenDocument: (path: string) => void;
   onOpenPage: (path: string) => void;
   onRegisterFlush?: (flush: (() => Promise<void>) | null) => void;
 }) {
@@ -148,9 +154,11 @@ function LoadedPageView({
   const [diskError, setDiskError] = useState<string>();
   const [railOpen, setRailOpen] = useState(true);
   const [mobileRailOpen, setMobileRailOpen] = useState(false);
-  const [railWidth, setRailWidth] = useState(380);
+  const [railWidth, setRailWidth] = useState(420);
   const [quickEditLoading, setQuickEditLoading] = useState(false);
   const [quickEditError, setQuickEditError] = useState<string>();
+  const [conversionError, setConversionError] = useState<string>();
+  const [convertingToWord, setConvertingToWord] = useState(false);
   const [quickEditPreview, setQuickEditPreview] =
     useState<QuickEditPreview | null>(null);
   const [sourceSelection, setSourceSelection] = useState({ from: 0, to: 0 });
@@ -174,12 +182,7 @@ function LoadedPageView({
   }, []);
 
   const editor = useEditor({
-    extensions: [
-      StarterKit,
-      Markdown,
-      Highlight,
-      PageQuickEditSuggestion,
-    ],
+    extensions: [...getPageMarkdownExtensions(), PageQuickEditSuggestion],
     content: editorMode === "rich" ? page.content : "",
     contentType: "markdown",
     editorProps: {
@@ -242,10 +245,7 @@ function LoadedPageView({
       setRevision(next.revision);
       setConflict(null);
       setCurrentContent(next.content, "saved");
-      queryClient.setQueryData(
-        pageKeys.detail(workspace.id, page.path),
-        next,
-      );
+      queryClient.setQueryData(pageKeys.detail(workspace.id, page.path), next);
     },
     [
       page.path,
@@ -525,6 +525,30 @@ function LoadedPageView({
     });
   };
 
+  const openAsWord = async () => {
+    setConversionError(undefined);
+    setConvertingToWord(true);
+    try {
+      const saved = await saveNow();
+      const document = await convertPageToDocument(workspace.id, {
+        path: page.path,
+        expectedRevision: saved.revision,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: documentKeys.all(workspace.id),
+      });
+      onOpenDocument(document.path);
+    } catch (error) {
+      setConversionError(
+        error instanceof Error
+          ? error.message
+          : "Heydesk could not open this page as a Word document.",
+      );
+    } finally {
+      setConvertingToWord(false);
+    }
+  };
+
   const changeSource = (event: ChangeEvent<HTMLTextAreaElement>) => {
     setCurrentContent(event.target.value, "unsaved");
     setSourceSelection({
@@ -543,13 +567,17 @@ function LoadedPageView({
     <div className="relative flex size-full min-w-0">
       <section
         className={`relative min-w-0 flex-1 overflow-y-auto bg-background ${isPageRun ? "ring-1 ring-inset ring-primary/20" : ""}`}
-        data-edit-origin={isPageRun ? `codex:${session.state.activeRun?.id}` : "user"}
+        data-edit-origin={
+          isPageRun ? `codex:${session.state.activeRun?.id}` : "user"
+        }
       >
         {editorMode === "rich" && editor ? (
           <EditorToolbar
+            convertingToWord={convertingToWord}
             disabled={editorLocked}
             editor={editor}
             isPageRun={isPageRun}
+            onOpenAsWord={() => void openAsWord()}
             onOpenMobileAssistant={() => setMobileRailOpen(true)}
             saveState={saveState}
           />
@@ -561,11 +589,31 @@ function LoadedPageView({
           />
         )}
 
+        {conversionError && (
+          <div
+            aria-live="polite"
+            className="mx-auto mt-4 flex max-w-3xl items-center justify-between gap-4 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm"
+          >
+            <span>{conversionError}</span>
+            <Button
+              onClick={() => setConversionError(undefined)}
+              size="sm"
+              variant="ghost"
+            >
+              Dismiss
+            </Button>
+          </div>
+        )}
+
         {conflict && (
           <div className="mx-auto mt-6 flex max-w-3xl items-center justify-between gap-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
             <span>This page changed on disk while you were editing.</span>
             <div className="flex shrink-0 gap-2">
-              <Button onClick={() => loadPage(conflict)} size="sm" variant="outline">
+              <Button
+                onClick={() => loadPage(conflict)}
+                size="sm"
+                variant="outline"
+              >
                 Reload disk version
               </Button>
               <Button
@@ -587,7 +635,11 @@ function LoadedPageView({
         {diskError && (
           <div className="mx-auto mt-6 flex max-w-3xl items-center justify-between gap-4 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
             <span>{diskError}</span>
-            <Button onClick={() => void reconcileDisk()} size="sm" variant="outline">
+            <Button
+              onClick={() => void reconcileDisk()}
+              size="sm"
+              variant="outline"
+            >
               Try again
             </Button>
           </div>
@@ -654,7 +706,6 @@ function LoadedPageView({
             </>
           )}
         </div>
-
       </section>
 
       {!railOpen && (
@@ -785,7 +836,7 @@ function QuickEditMenu({
     return (
       <div className="w-80 overflow-hidden rounded-xl border bg-background shadow-lg">
         <div className="flex h-11 items-center gap-2 border-b px-2">
-          <SparklesIcon className="ml-1 size-4 shrink-0 text-primary" />
+          <CodexIcon className="ml-1 size-4 shrink-0" />
           <Input
             autoFocus
             className="h-9 flex-1 rounded-none border-0 bg-transparent px-1 shadow-none focus-visible:border-transparent focus-visible:ring-0"
@@ -801,7 +852,7 @@ function QuickEditMenu({
                 setAiOpen(false);
               }
             }}
-            placeholder="Ask AI anything…"
+            placeholder="Ask Codex anything…"
             value={instruction}
           />
           <Button
@@ -816,9 +867,7 @@ function QuickEditMenu({
           </Button>
         </div>
         {error && (
-          <p className="border-b px-3 py-2 text-xs text-destructive">
-            {error}
-          </p>
+          <p className="border-b px-3 py-2 text-xs text-destructive">{error}</p>
         )}
         <div className="p-1">
           <QuickEditAction
@@ -862,8 +911,8 @@ function QuickEditMenu({
         type="button"
         variant="ghost"
       >
-        <SparklesIcon className="text-primary" />
-        Ask AI
+        <CodexIcon className="size-4" />
+        Ask Codex
       </Button>
       {editor && (
         <>
@@ -963,15 +1012,19 @@ function QuickEditAction({
 }
 
 function EditorToolbar({
+  convertingToWord,
   disabled,
   editor,
   isPageRun,
+  onOpenAsWord,
   onOpenMobileAssistant,
   saveState,
 }: {
+  convertingToWord: boolean;
   disabled: boolean;
   editor: Editor;
   isPageRun: boolean;
+  onOpenAsWord: () => void;
   onOpenMobileAssistant: () => void;
   saveState: SaveState;
 }) {
@@ -985,12 +1038,10 @@ function EditorToolbar({
       italic: current.isActive("italic"),
       underline: current.isActive("underline"),
       strike: current.isActive("strike"),
-      code: current.isActive("code"),
       highlight: current.isActive("highlight"),
       bulletList: current.isActive("bulletList"),
       orderedList: current.isActive("orderedList"),
       blockquote: current.isActive("blockquote"),
-      codeBlock: current.isActive("codeBlock"),
       canUndo: current.can().chain().focus().undo().run(),
       canRedo: current.can().chain().focus().redo().run(),
     }),
@@ -1000,192 +1051,190 @@ function EditorToolbar({
 
   return (
     <div className="sticky top-0 z-10 border-b bg-background/95 px-4 py-2 backdrop-blur">
-      <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-1">
-        <Button
-          aria-label="Paragraph"
-          className={activeClass(state.paragraph)}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().setParagraph().run()}
-          size="icon-sm"
-          title="Paragraph"
-          type="button"
-          variant="ghost"
-        >
-          <span className="text-sm font-medium">P</span>
-        </Button>
-        <Button
-          aria-label="Heading 1"
-          className={activeClass(state.heading1)}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-          size="icon-sm"
-          title="Heading 1"
-          type="button"
-          variant="ghost"
-        >
-          <Heading1Icon />
-        </Button>
-        <Button
-          aria-label="Heading 2"
-          className={activeClass(state.heading2)}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-          size="icon-sm"
-          title="Heading 2"
-          type="button"
-          variant="ghost"
-        >
-          <Heading2Icon />
-        </Button>
-        <ToolbarSeparator />
-        <Button
-          aria-label="Bold"
-          className={activeClass(state.bold)}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleBold().run()}
-          size="icon-sm"
-          title="Bold"
-          type="button"
-          variant="ghost"
-        >
-          <BoldIcon />
-        </Button>
-        <Button
-          aria-label="Italic"
-          className={activeClass(state.italic)}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleItalic().run()}
-          size="icon-sm"
-          title="Italic"
-          type="button"
-          variant="ghost"
-        >
-          <ItalicIcon />
-        </Button>
-        <Button
-          aria-label="Underline"
-          className={activeClass(state.underline)}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleUnderline().run()}
-          size="icon-sm"
-          title="Underline"
-          type="button"
-          variant="ghost"
-        >
-          <UnderlineIcon />
-        </Button>
-        <Button
-          aria-label="Strikethrough"
-          className={activeClass(state.strike)}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleStrike().run()}
-          size="icon-sm"
-          title="Strikethrough"
-          type="button"
-          variant="ghost"
-        >
-          <StrikethroughIcon />
-        </Button>
-        <Button
-          aria-label="Inline code"
-          className={activeClass(state.code)}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleCode().run()}
-          size="icon-sm"
-          title="Inline code"
-          type="button"
-          variant="ghost"
-        >
-          <Code2Icon />
-        </Button>
-        <Button
-          aria-label="Highlight"
-          className={activeClass(state.highlight)}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleHighlight().run()}
-          size="icon-sm"
-          title="Highlight"
-          type="button"
-          variant="ghost"
-        >
-          <HighlighterIcon />
-        </Button>
-        <ToolbarSeparator />
-        <Button
-          aria-label="Bullet list"
-          className={activeClass(state.bulletList)}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
-          size="icon-sm"
-          title="Bullet list"
-          type="button"
-          variant="ghost"
-        >
-          <ListIcon />
-        </Button>
-        <Button
-          aria-label="Numbered list"
-          className={activeClass(state.orderedList)}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          size="icon-sm"
-          title="Numbered list"
-          type="button"
-          variant="ghost"
-        >
-          <ListOrderedIcon />
-        </Button>
-        <Button
-          aria-label="Blockquote"
-          className={activeClass(state.blockquote)}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleBlockquote().run()}
-          size="icon-sm"
-          title="Blockquote"
-          type="button"
-          variant="ghost"
-        >
-          <QuoteIcon />
-        </Button>
-        <Button
-          aria-label="Code block"
-          className={activeClass(state.codeBlock)}
-          disabled={disabled}
-          onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-          size="icon-sm"
-          title="Code block"
-          type="button"
-          variant="ghost"
-        >
-          <span className="font-mono text-xs">{"</>"}</span>
-        </Button>
-        <div className="flex-1" />
-        <Button
-          aria-label="Undo"
-          className="text-muted-foreground"
-          disabled={disabled || !state.canUndo}
-          onClick={() => editor.chain().focus().undo().run()}
-          size="icon-sm"
-          title="Undo"
-          type="button"
-          variant="ghost"
-        >
-          <Undo2Icon />
-        </Button>
-        <Button
-          aria-label="Redo"
-          className="text-muted-foreground"
-          disabled={disabled || !state.canRedo}
-          onClick={() => editor.chain().focus().redo().run()}
-          size="icon-sm"
-          title="Redo"
-          type="button"
-          variant="ghost"
-        >
-          <Redo2Icon />
-        </Button>
-        <SaveStatus isPageRun={isPageRun} state={saveState} />
-        <MobileAssistantOpenControl onOpen={onOpenMobileAssistant} />
+      <div className="w-full overflow-x-auto">
+        <div className="mx-auto flex w-full max-w-3xl flex-nowrap items-center gap-1 px-6">
+          <Button
+            aria-label="Paragraph"
+            className={activeClass(state.paragraph)}
+            disabled={disabled}
+            onClick={() => editor.chain().focus().setParagraph().run()}
+            size="icon-sm"
+            title="Paragraph"
+            type="button"
+            variant="ghost"
+          >
+            <span className="text-sm font-medium">P</span>
+          </Button>
+          <Button
+            aria-label="Heading 1"
+            className={activeClass(state.heading1)}
+            disabled={disabled}
+            onClick={() =>
+              editor.chain().focus().toggleHeading({ level: 1 }).run()
+            }
+            size="icon-sm"
+            title="Heading 1"
+            type="button"
+            variant="ghost"
+          >
+            <Heading1Icon />
+          </Button>
+          <Button
+            aria-label="Heading 2"
+            className={activeClass(state.heading2)}
+            disabled={disabled}
+            onClick={() =>
+              editor.chain().focus().toggleHeading({ level: 2 }).run()
+            }
+            size="icon-sm"
+            title="Heading 2"
+            type="button"
+            variant="ghost"
+          >
+            <Heading2Icon />
+          </Button>
+          <ToolbarSeparator />
+          <Button
+            aria-label="Bold"
+            className={activeClass(state.bold)}
+            disabled={disabled}
+            onClick={() => editor.chain().focus().toggleBold().run()}
+            size="icon-sm"
+            title="Bold"
+            type="button"
+            variant="ghost"
+          >
+            <BoldIcon />
+          </Button>
+          <Button
+            aria-label="Italic"
+            className={activeClass(state.italic)}
+            disabled={disabled}
+            onClick={() => editor.chain().focus().toggleItalic().run()}
+            size="icon-sm"
+            title="Italic"
+            type="button"
+            variant="ghost"
+          >
+            <ItalicIcon />
+          </Button>
+          <Button
+            aria-label="Underline"
+            className={activeClass(state.underline)}
+            disabled={disabled}
+            onClick={() => editor.chain().focus().toggleUnderline().run()}
+            size="icon-sm"
+            title="Underline"
+            type="button"
+            variant="ghost"
+          >
+            <UnderlineIcon />
+          </Button>
+          <Button
+            aria-label="Strikethrough"
+            className={activeClass(state.strike)}
+            disabled={disabled}
+            onClick={() => editor.chain().focus().toggleStrike().run()}
+            size="icon-sm"
+            title="Strikethrough"
+            type="button"
+            variant="ghost"
+          >
+            <StrikethroughIcon />
+          </Button>
+          <Button
+            aria-label="Highlight"
+            className={activeClass(state.highlight)}
+            disabled={disabled}
+            onClick={() => editor.chain().focus().toggleHighlight().run()}
+            size="icon-sm"
+            title="Highlight"
+            type="button"
+            variant="ghost"
+          >
+            <HighlighterIcon />
+          </Button>
+          <ToolbarSeparator />
+          <Button
+            aria-label="Bullet list"
+            className={activeClass(state.bulletList)}
+            disabled={disabled}
+            onClick={() => editor.chain().focus().toggleBulletList().run()}
+            size="icon-sm"
+            title="Bullet list"
+            type="button"
+            variant="ghost"
+          >
+            <ListIcon />
+          </Button>
+          <Button
+            aria-label="Numbered list"
+            className={activeClass(state.orderedList)}
+            disabled={disabled}
+            onClick={() => editor.chain().focus().toggleOrderedList().run()}
+            size="icon-sm"
+            title="Numbered list"
+            type="button"
+            variant="ghost"
+          >
+            <ListOrderedIcon />
+          </Button>
+          <Button
+            aria-label="Blockquote"
+            className={activeClass(state.blockquote)}
+            disabled={disabled}
+            onClick={() => editor.chain().focus().toggleBlockquote().run()}
+            size="icon-sm"
+            title="Blockquote"
+            type="button"
+            variant="ghost"
+          >
+            <QuoteIcon />
+          </Button>
+          <div className="w-6 shrink-0" />
+          <Button
+            aria-label="Undo"
+            className="text-muted-foreground"
+            disabled={disabled || !state.canUndo}
+            onClick={() => editor.chain().focus().undo().run()}
+            size="icon-sm"
+            title="Undo"
+            type="button"
+            variant="ghost"
+          >
+            <Undo2Icon />
+          </Button>
+          <Button
+            aria-label="Redo"
+            className="text-muted-foreground"
+            disabled={disabled || !state.canRedo}
+            onClick={() => editor.chain().focus().redo().run()}
+            size="icon-sm"
+            title="Redo"
+            type="button"
+            variant="ghost"
+          >
+            <Redo2Icon />
+          </Button>
+          <SaveStatus isPageRun={isPageRun} state={saveState} />
+          <Button
+            aria-label="Open this page as a Word document"
+            className="ml-2 gap-1 rounded-lg px-2 text-xs"
+            disabled={disabled || convertingToWord}
+            onClick={onOpenAsWord}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {convertingToWord ? (
+              <LoaderCircleIcon className="animate-spin" />
+            ) : (
+              <MicrosoftWord className="size-4" />
+            )}
+            {convertingToWord ? "Converting…" : "DOCX"}
+          </Button>
+          <MobileAssistantOpenControl onOpen={onOpenMobileAssistant} />
+        </div>
       </div>
     </div>
   );

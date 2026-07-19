@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import JSZip from "jszip";
 import {
   createDocumentWithText,
   createDocx,
@@ -9,6 +10,7 @@ import {
   updateMultipleFiles,
 } from "@eigenpal/docx-editor-core/headless";
 import { createEmptyDocx } from "@eigenpal/docx-editor-core/docx/rezip";
+import { resolveParagraphStyleOptions } from "@eigenpal/docx-editor-core/utils/stylePreview";
 
 import {
   DocumentAlreadyExistsError,
@@ -57,8 +59,35 @@ describe("DocumentService", () => {
     );
     expect(styles.find(({ styleId }) => styleId === "Heading1")).toMatchObject({
       pPr: { outlineLevel: 0 },
-      rPr: { bold: true, fontSize: 40 },
+      rPr: {
+        bold: true,
+        fontFamily: { ascii: "Georgia", hAnsi: "Georgia" },
+        fontSize: 40,
+      },
     });
+    expect(styles.find(({ styleId }) => styleId === "Title")).toMatchObject({
+      rPr: { fontFamily: { ascii: "Georgia", hAnsi: "Georgia" } },
+    });
+    const stylesXml = await JSZip.loadAsync(arrayBuffer(content.buffer)).then(
+      (archive) => archive.file("word/styles.xml")?.async("text"),
+    );
+    expect(stylesXml).toContain(
+      '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/>',
+    );
+    expect(
+      resolveParagraphStyleOptions(styles).map(({ styleId }) => styleId),
+    ).toEqual([
+      "Normal",
+      "Title",
+      "Subtitle",
+      "Heading1",
+      "Heading2",
+      "Heading3",
+      "Heading4",
+      "Heading5",
+      "Heading6",
+      "Quote",
+    ]);
     await expect(service.list("workspace-1")).resolves.toMatchObject([
       { path: "documents/Project brief.docx" },
     ]);
