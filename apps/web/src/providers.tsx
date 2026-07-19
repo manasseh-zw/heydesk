@@ -19,9 +19,10 @@ export function Providers({ children }: ProvidersProps) {
   return (
     <ThemeProvider
       attribute="class"
-      defaultTheme="system"
+      defaultTheme="light"
       disableTransitionOnChange
-      enableSystem
+      enableSystem={false}
+      forcedTheme="light"
       storageKey="heydesk-theme"
     >
       <QueryClientProvider client={queryClient}>

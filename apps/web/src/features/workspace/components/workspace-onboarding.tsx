@@ -54,6 +54,7 @@ export function WorkspaceOnboarding() {
           }
         : current,
     );
+    void window.heydeskDesktop?.setWindowMode("workspace");
     setDialogMode(null);
     setSelectedWorkspace(workspace);
   }
@@ -89,14 +90,17 @@ export function WorkspaceOnboarding() {
   if (selectedWorkspace) {
     return (
       <WorkspaceShell
-        onCloseWorkspace={() => setSelectedWorkspace(null)}
+        onCloseWorkspace={() => {
+          void window.heydeskDesktop?.setWindowMode("launcher");
+          setSelectedWorkspace(null);
+        }}
         workspace={selectedWorkspace}
       />
     );
   }
 
   return (
-    <main className="relative flex h-svh w-full overflow-hidden bg-background">
+    <main className="relative flex h-full w-full overflow-hidden bg-background">
       {openingLabel && (
         <div
           aria-live="polite"

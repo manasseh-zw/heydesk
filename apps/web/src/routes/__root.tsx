@@ -34,15 +34,26 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 });
 
 function RootComponent() {
+  const isDesktop =
+    typeof window !== "undefined" && Boolean(window.heydeskDesktop);
+
   return (
     <>
       <HeadContent />
       <Providers>
-        <div className="min-h-svh">
-          <Outlet />
+        <div className="relative h-svh overflow-hidden">
+          {isDesktop && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 top-0 z-50 h-2 [-webkit-app-region:drag]"
+            />
+          )}
+          <div className="h-full min-h-0">
+            <Outlet />
+          </div>
         </div>
       </Providers>
-      <TanStackRouterDevtools position="bottom-left" />
+      {!isDesktop && <TanStackRouterDevtools position="bottom-left" />}
     </>
   );
 }

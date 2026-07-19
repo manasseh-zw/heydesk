@@ -1,4 +1,3 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ChevronRight,
@@ -8,30 +7,22 @@ import {
   Home,
   Plus,
   Search,
-  Settings,
 } from "lucide-react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 
+import { Button } from "@heydesk/ui/components/button";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@heydesk/ui/components/collapsible";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupAction,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInput,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarRail,
-} from "@heydesk/ui/components/sidebar";
-import { Button } from "@heydesk/ui/components/button";
 import {
   Dialog,
   DialogClose,
@@ -48,20 +39,35 @@ import {
   DropdownMenuTrigger,
 } from "@heydesk/ui/components/dropdown-menu";
 import { Input } from "@heydesk/ui/components/input";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupAction,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInput,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarRail,
+} from "@heydesk/ui/components/sidebar";
 
 import { LogoMark } from "@/components/logo";
+import { preloadDocumentView } from "@/features/document/components/lazy-document-view";
+import { documentsQueryOptions } from "@/features/document/document.queries";
+import type { DocumentSummary } from "@/features/document/document.types";
 import { pagesQueryOptions } from "@/features/page/page.queries";
 import type { PageSummary } from "@/features/page/page.types";
-import { documentsQueryOptions } from "@/features/document/document.queries";
-import { preloadDocumentView } from "@/features/document/components/lazy-document-view";
-import type { DocumentSummary } from "@/features/document/document.types";
 import type { WorkspaceSummary } from "../workspace.types";
 
 type WorkspaceSidebarProps = {
   workspace: WorkspaceSummary;
   onCreateDocument: (name: string) => Promise<void>;
   onImportDocument: (file: File) => Promise<void>;
-  onCreatePage: () => void;
+  onCreatePage: (name: string) => Promise<void>;
   onOpenPage: (path: string) => void;
   onOpenDocument: (path: string) => void;
   onOpenHome: () => void;
@@ -82,7 +88,11 @@ export function WorkspaceSidebar({
   activePagePath,
   activeDocumentPath,
 }: WorkspaceSidebarProps) {
+  const isDesktop = Boolean(window.heydeskDesktop);
   const [query, setQuery] = useState("");
+  const [creatingKind, setCreatingKind] = useState<
+    "page" | "document" | null
+  >(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const pagesQuery = useQuery(pagesQueryOptions(workspace.id));
   const documentsQuery = useQuery(documentsQueryOptions(workspace.id));
@@ -106,19 +116,13 @@ export function WorkspaceSidebar({
 
   return (
     <Sidebar collapsible="offcanvas">
-      <SidebarHeader className="gap-3 p-3">
-        <button
-          aria-label="Switch workspace"
-          className="flex h-8 w-full items-center gap-2 overflow-hidden px-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-          onClick={onSwitchWorkspace}
-          type="button"
-        >
-          <LogoMark className="size-5 shrink-0 text-logo-mark" />
-          <span className="truncate font-brand text-base font-semibold leading-5">
-            Heydesk
-          </span>
-          <span className="sr-only">Current workspace: {workspace.name}</span>
-        </button>
+      <SidebarHeader className={isDesktop ? "gap-2 px-3 pb-3 pt-0" : "p-3"}>
+        {isDesktop && (
+          <div
+            aria-hidden="true"
+            className="h-12 shrink-0 [-webkit-app-region:drag]"
+          />
+        )}
 
         <div className="relative">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -141,7 +145,9 @@ export function WorkspaceSidebar({
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
-                isActive={activePagePath === null && activeDocumentPath === null}
+                isActive={
+                  activePagePath === null && activeDocumentPath === null
+                }
                 onClick={onOpenHome}
                 tooltip="Home"
               >
@@ -156,7 +162,13 @@ export function WorkspaceSidebar({
           addLabel="Create page"
           items={filteredPages}
           label="Pages"
-          onAdd={onCreatePage}
+          creating={creatingKind === "page"}
+          onAdd={() => setCreatingKind("page")}
+          onCancelCreate={() => setCreatingKind(null)}
+          onCreateItem={async (name) => {
+            await onCreatePage(name);
+            setCreatingKind(null);
+          }}
           onOpen={onOpenPage}
           activePath={activePagePath}
           loading={pagesQuery.isPending}
@@ -169,11 +181,17 @@ export function WorkspaceSidebar({
           label="Documents"
           addControl={
             <DocumentAddMenu
-              onCreate={onCreateDocument}
               onImport={onImportDocument}
+              onStartCreate={() => setCreatingKind("document")}
             />
           }
+          creating={creatingKind === "document"}
           onAdd={() => undefined}
+          onCancelCreate={() => setCreatingKind(null)}
+          onCreateItem={async (name) => {
+            await onCreateDocument(name);
+            setCreatingKind(null);
+          }}
           onOpen={onOpenDocument}
           onItemIntent={() => void preloadDocumentView()}
           activePath={activeDocumentPath}
@@ -185,9 +203,15 @@ export function WorkspaceSidebar({
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton tooltip="Settings">
-              <Settings />
-              <span>Settings</span>
+            <SidebarMenuButton
+              onClick={onSwitchWorkspace}
+              tooltip="Switch workspace"
+            >
+              <LogoMark className="text-logo-mark " />
+              <span className="font-brand font-light text-lg">Heydesk</span>
+              <span className="sr-only">
+                Current workspace: {workspace.name}
+              </span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -204,6 +228,9 @@ type ContentSectionProps = {
   label: string;
   onAdd: () => void;
   addControl?: ReactNode;
+  creating?: boolean;
+  onCancelCreate?: () => void;
+  onCreateItem?: (name: string) => Promise<void>;
   onOpen: (path: string) => void;
   activePath: string | null;
   loading: boolean;
@@ -218,6 +245,9 @@ function ContentSection({
   label,
   onAdd,
   addControl,
+  creating = false,
+  onCancelCreate,
+  onCreateItem,
   onOpen,
   activePath,
   loading,
@@ -225,22 +255,42 @@ function ContentSection({
   onItemIntent,
 }: ContentSectionProps) {
   const ItemIcon = document ? FileText : File;
+  const [open, setOpen] = useState(true);
+
+  useEffect(() => {
+    if (creating) setOpen(true);
+  }, [creating]);
 
   return (
-    <Collapsible className="group/content-section" defaultOpen>
+    <Collapsible
+      className="group/content-section"
+      onOpenChange={setOpen}
+      open={open}
+    >
       <SidebarGroup>
         <SidebarGroupLabel render={<CollapsibleTrigger />}>
           <ChevronRight className="transition-transform group-data-open/content-section:rotate-90" />
           {label}
         </SidebarGroupLabel>
         {addControl ?? (
-          <SidebarGroupAction aria-label={addLabel} onClick={onAdd} title={addLabel}>
+          <SidebarGroupAction
+            aria-label={addLabel}
+            onClick={onAdd}
+            title={addLabel}
+          >
             <Plus />
           </SidebarGroupAction>
         )}
         <CollapsibleContent>
           <SidebarGroupContent>
             <SidebarMenu>
+              {creating && onCancelCreate && onCreateItem && (
+                <InlineCreateItem
+                  document={document}
+                  onCancel={onCancelCreate}
+                  onCreate={onCreateItem}
+                />
+              )}
               {items.map((item) => (
                 <SidebarMenuItem key={item.path}>
                   <SidebarMenuButton
@@ -257,13 +307,15 @@ function ContentSection({
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
-              {!loading && items.length === 0 && (
+              {!creating && !loading && items.length === 0 && (
                 <li className="px-7 py-2 text-xs text-muted-foreground">
                   {searchQuery ? "No matches" : `No ${label.toLowerCase()} yet`}
                 </li>
               )}
               {loading && (
-                <li className="px-7 py-2 text-xs text-muted-foreground">Loading…</li>
+                <li className="px-7 py-2 text-xs text-muted-foreground">
+                  Loading…
+                </li>
               )}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -284,39 +336,23 @@ function useFilteredItems(items: NavigationItem[], query: string) {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     if (!normalizedQuery) return items;
     return items.filter((item) =>
-      `${item.title} ${item.path}`.toLocaleLowerCase().includes(normalizedQuery),
+      `${item.title} ${item.path}`
+        .toLocaleLowerCase()
+        .includes(normalizedQuery),
     );
   }, [items, query]);
 }
 
 function DocumentAddMenu({
-  onCreate,
   onImport,
+  onStartCreate,
 }: {
-  onCreate: (name: string) => Promise<void>;
   onImport: (file: File) => Promise<void>;
+  onStartCreate: () => void;
 }) {
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!name.trim()) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await onCreate(name.trim());
-      setDialogOpen(false);
-      setName("");
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not create document.");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const importFile = async (file?: File) => {
     if (!file) return;
@@ -325,8 +361,9 @@ function DocumentAddMenu({
     try {
       await onImport(file);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not import document.");
-      setDialogOpen(true);
+      setError(
+        caught instanceof Error ? caught.message : "Could not import document.",
+      );
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -339,16 +376,26 @@ function DocumentAddMenu({
         <DropdownMenuTrigger
           aria-label="Add document"
           className="absolute top-3.5 right-3 flex aspect-square w-5 items-center justify-center rounded-xl p-0 text-sidebar-foreground outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+          disabled={busy}
           title="Add document"
         >
           <Plus className="size-4" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-52">
-          <DropdownMenuItem onClick={() => setDialogOpen(true)}>
+        <DropdownMenuContent
+          align="end"
+          className="w-40 min-w-40 rounded-xl p-1"
+        >
+          <DropdownMenuItem
+            className="gap-2 rounded-lg px-2 py-1.5 font-normal whitespace-nowrap [&_svg]:size-3.5"
+            onClick={() => requestAnimationFrame(onStartCreate)}
+          >
             <FileText /> New document
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => inputRef.current?.click()}>
-            <FileUp /> Import Word document
+          <DropdownMenuItem
+            className="gap-2 rounded-lg px-2 py-1.5 font-normal whitespace-nowrap [&_svg]:size-3.5"
+            onClick={() => inputRef.current?.click()}
+          >
+            <FileUp /> Import document
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -359,31 +406,108 @@ function DocumentAddMenu({
         onChange={(event) => void importFile(event.target.files?.[0])}
         type="file"
       />
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog
+        open={Boolean(error)}
+        onOpenChange={(open) => {
+          if (!open) setError(null);
+        }}
+      >
         <DialogContent>
-          <form onSubmit={submit}>
-            <DialogHeader>
-              <DialogTitle>New Word document</DialogTitle>
-              <DialogDescription>Create an editable document in this workspace.</DialogDescription>
-            </DialogHeader>
-            <Input
-              autoFocus
-              className="mt-5"
-              disabled={busy}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Document name"
-              value={name}
-            />
-            {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
-            <DialogFooter className="mt-6">
-              <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-              <Button disabled={busy || !name.trim()} type="submit">
-                {busy ? "Creating…" : "Create"}
-              </Button>
-            </DialogFooter>
-          </form>
+          <DialogHeader>
+            <DialogTitle>Could not import document</DialogTitle>
+            <DialogDescription>{error}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-6">
+            <DialogClose render={<Button type="button" variant="outline" />}>
+              Close
+            </DialogClose>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+function InlineCreateItem({
+  document,
+  onCancel,
+  onCreate,
+}: {
+  document: boolean;
+  onCancel: () => void;
+  onCreate: (name: string) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const ItemIcon = document ? FileText : File;
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => inputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  const commit = async () => {
+    const nextName = name.trim();
+    if (!nextName) {
+      onCancel();
+      return;
+    }
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      await onCreate(nextName);
+    } catch (caught) {
+      busyRef.current = false;
+      setBusy(false);
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : `Could not create ${document ? "document" : "page"}.`,
+      );
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  };
+
+  return (
+    <SidebarMenuItem>
+      <form
+        className="flex min-w-0 items-center gap-2 pl-7 pr-2"
+        onSubmit={(event: FormEvent) => {
+          event.preventDefault();
+          void commit();
+        }}
+      >
+        <ItemIcon className="size-4 shrink-0" />
+        <Input
+          aria-label={document ? "Document name" : "Page name"}
+          autoFocus
+          className="h-7 min-w-0 rounded-none border-0 bg-transparent px-0 text-sm shadow-none outline-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
+          disabled={busy}
+          maxLength={120}
+          onBlur={() => {
+            if (!busyRef.current) void commit();
+          }}
+          onChange={(event) => setName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onCancel();
+            }
+          }}
+          ref={inputRef}
+          value={name}
+        />
+      </form>
+      {error && (
+        <p className="px-2 pt-1 pl-13 text-[11px] leading-4 text-destructive">
+          {error}
+        </p>
+      )}
+    </SidebarMenuItem>
   );
 }

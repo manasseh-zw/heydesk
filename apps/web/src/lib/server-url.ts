@@ -15,6 +15,7 @@ declare global {
       appVersion: string;
       pickWorkspaceFolder: () => Promise<string | null>;
       platform: string;
+      setWindowMode: (mode: "launcher" | "workspace") => Promise<void>;
     };
   }
 }

@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  nativeTheme,
   session,
   shell,
   utilityProcess,
@@ -25,12 +26,14 @@ type ServerConnection = {
 
 const serverStartupTimeoutMs = 20_000;
 const openWorkspaceFolderChannel = "heydesk:dialog:open-workspace-folder";
+const setWindowModeChannel = "heydesk:window:set-mode";
 let mainWindow: BrowserWindow | null = null;
 let serverProcess: UtilityProcess | null = null;
 let serverConnection: ServerConnection | null = null;
 let isQuitting = false;
 
 app.setName("Heydesk");
+nativeTheme.themeSource = "light";
 
 const singleInstanceLock = app.requestSingleInstanceLock();
 if (!singleInstanceLock) app.quit();
@@ -100,7 +103,7 @@ async function startServer(): Promise<ServerConnection> {
     env: {
       ...process.env,
       CORS_ORIGIN: corsOrigin,
-      DATABASE_URL: `file:${join(app.getPath("userData"), "heydesk.sqlite")}`,
+      DATABASE_URL: "file::memory:",
       HEYDESK_BOOTSTRAP_TOKEN: bootstrapToken,
       ...(rendererDirectory ? { HEYDESK_RENDERER_DIR: rendererDirectory } : {}),
       NODE_ENV: app.isPackaged ? "production" : "development",
@@ -150,12 +153,18 @@ async function startServer(): Promise<ServerConnection> {
 function createWindow(apiOrigin: string): BrowserWindow {
   const window = new BrowserWindow({
     backgroundColor: "#ffffff",
-    height: 900,
-    minHeight: 640,
-    minWidth: 960,
+    height: 680,
+    minHeight: 560,
+    minWidth: 640,
     show: false,
     title: "Heydesk",
-    width: 1440,
+    width: 920,
+    ...(process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 22, y: 24 },
+        }
+      : {}),
     webPreferences: {
       additionalArguments: [
         `--heydesk-api-origin=${apiOrigin}`,
@@ -191,6 +200,7 @@ function createWindow(apiOrigin: string): BrowserWindow {
 
 function registerDesktopHandlers(): void {
   ipcMain.removeHandler(openWorkspaceFolderChannel);
+  ipcMain.removeHandler(setWindowModeChannel);
   ipcMain.handle(
     openWorkspaceFolderChannel,
     async (event: IpcMainInvokeEvent): Promise<string | null> => {
@@ -206,6 +216,27 @@ function registerDesktopHandlers(): void {
       });
 
       return result.canceled ? null : (result.filePaths[0] ?? null);
+    },
+  );
+  ipcMain.handle(
+    setWindowModeChannel,
+    (event: IpcMainInvokeEvent, mode: unknown): void => {
+      if (!mainWindow || event.sender.id !== mainWindow.webContents.id) {
+        throw new Error("Window controls are not available for this window.");
+      }
+      if (mode !== "launcher" && mode !== "workspace") {
+        throw new Error("Heydesk received an invalid window mode.");
+      }
+
+      const isWorkspace = mode === "workspace";
+      mainWindow.setMinimumSize(isWorkspace ? 960 : 640, isWorkspace ? 640 : 560);
+      if (isWorkspace) {
+        mainWindow.maximize();
+        return;
+      }
+      if (mainWindow.isMaximized()) mainWindow.unmaximize();
+      mainWindow.setSize(920, 680, true);
+      mainWindow.center();
     },
   );
 }

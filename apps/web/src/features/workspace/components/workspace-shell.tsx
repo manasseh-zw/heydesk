@@ -19,6 +19,8 @@ import type { WorkspaceSummary } from "../workspace.types";
 import { AssistantHome } from "@/features/assistant/components/assistant-home";
 import { AssistantSessionProvider } from "@/features/assistant/assistant-session";
 import { PageView } from "@/features/page/components/page-view";
+import { pageKeys } from "@/features/page/page.queries";
+import { createPage } from "@/features/page/page.service";
 import { documentKeys } from "@/features/document/document.queries";
 import {
   createDocument,
@@ -40,8 +42,8 @@ export function WorkspaceShell({
   workspace,
   onCloseWorkspace,
 }: WorkspaceShellProps) {
+  const isDesktop = Boolean(window.heydeskDesktop);
   const queryClient = useQueryClient();
-  const [draftKind, setDraftKind] = useState<"page" | null>(null);
   const [activePagePath, setActivePagePath] = useState<string | null>(null);
   const [activeDocumentPath, setActiveDocumentPath] = useState<string | null>(null);
   const flushContentRef = useRef<(() => Promise<void>) | null>(null);
@@ -57,37 +59,33 @@ export function WorkspaceShell({
 
   const openHome = () => {
     void afterFlush(() => {
-      setDraftKind(null);
       setActivePagePath(null);
       setActiveDocumentPath(null);
     });
   };
   const openPage = (path: string) => {
     void afterFlush(() => {
-      setDraftKind(null);
       setActiveDocumentPath(null);
       setActivePagePath(path);
     });
   };
   const openDocument = (path: string) => {
     void afterFlush(() => {
-      setDraftKind(null);
       setActivePagePath(null);
       setActiveDocumentPath(path);
     });
   };
-  const createDraft = () => {
-    void afterFlush(() => {
-      setActivePagePath(null);
-      setActiveDocumentPath(null);
-      setDraftKind("page");
-    });
+  const createWorkspacePage = async (name: string) => {
+    await flushContentRef.current?.();
+    const page = await createPage(workspace.id, name);
+    await queryClient.invalidateQueries({ queryKey: pageKeys.all(workspace.id) });
+    setActiveDocumentPath(null);
+    setActivePagePath(page.path);
   };
   const createWordDocument = async (name: string) => {
     await flushContentRef.current?.();
     const document = await createDocument(workspace.id, name);
     await queryClient.invalidateQueries({ queryKey: documentKeys.all(workspace.id) });
-    setDraftKind(null);
     setActivePagePath(null);
     setActiveDocumentPath(document.path);
   };
@@ -95,17 +93,14 @@ export function WorkspaceShell({
     await flushContentRef.current?.();
     const document = await importDocument(workspace.id, file);
     await queryClient.invalidateQueries({ queryKey: documentKeys.all(workspace.id) });
-    setDraftKind(null);
     setActivePagePath(null);
     setActiveDocumentPath(document.path);
   };
   const closeWorkspace = () => void afterFlush(onCloseWorkspace);
-  const currentPage = draftKind
-    ? `Untitled ${draftKind}`
-    : activePagePath
-      ? pageLabel(activePagePath)
-      : activeDocumentPath
-        ? documentLabel(activeDocumentPath)
+  const currentPage = activePagePath
+    ? pageLabel(activePagePath)
+    : activeDocumentPath
+      ? documentLabel(activeDocumentPath)
       : "Home";
 
   const registerFlush = useCallback((flush: (() => Promise<void>) | null) => {
@@ -116,7 +111,7 @@ export function WorkspaceShell({
     : ({ kind: "workspace" } as const);
 
   return (
-    <SidebarProvider className="h-svh overflow-hidden">
+    <SidebarProvider className="h-full overflow-hidden">
       <AssistantSessionProvider
         key={activeDocumentPath ? `document:${activeDocumentPath}` : "workspace"}
         scope={assistantScope}
@@ -127,7 +122,7 @@ export function WorkspaceShell({
           activeDocumentPath={activeDocumentPath}
           onCreateDocument={createWordDocument}
           onImportDocument={importWordDocument}
-          onCreatePage={createDraft}
+          onCreatePage={createWorkspacePage}
           onOpenDocument={openDocument}
           onOpenPage={openPage}
           onOpenHome={openHome}
@@ -135,30 +130,40 @@ export function WorkspaceShell({
           workspace={workspace}
         />
 
-        <SidebarInset className="h-svh min-h-0 overflow-hidden">
-        <header className="flex h-12 shrink-0 items-center gap-3 px-3">
-          <SidebarTrigger />
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink
-                  render={
-                    <button onClick={openHome} type="button" />
-                  }
-                >
-                  {workspace.name}
-                </BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>
-                  {currentPage}
-                </BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </header>
-        <main className="flex min-h-0 flex-1 overflow-hidden">
+        <SidebarInset
+          className={`h-full min-h-0 overflow-hidden ${isDesktop ? "peer-data-[state=collapsed]:[--desktop-titlebar-reserve:78px]" : ""}`}
+        >
+          <header
+            className={`flex shrink-0 items-center gap-3 border-b pr-3 pl-[calc(0.75rem+var(--desktop-titlebar-reserve,0px))] transition-[padding] ${isDesktop ? "h-16 py-3 [-webkit-app-region:drag]" : "h-12"}`}
+          >
+            <SidebarTrigger
+              className={isDesktop ? "[-webkit-app-region:no-drag]" : ""}
+            />
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem>
+                  <BreadcrumbLink
+                    render={
+                      <button
+                        className={
+                          isDesktop ? "[-webkit-app-region:no-drag]" : ""
+                        }
+                        onClick={openHome}
+                        type="button"
+                      />
+                    }
+                  >
+                    {workspace.name}
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                <BreadcrumbItem>
+                  <BreadcrumbPage>{currentPage}</BreadcrumbPage>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+          </header>
+          <main className="flex min-h-0 flex-1 overflow-hidden">
           {activePagePath ? (
             <PageView
               onOpenPage={openPage}
@@ -181,17 +186,10 @@ export function WorkspaceShell({
                 workspace={workspace}
               />
             </Suspense>
-          ) : draftKind ? (
-            <div className="m-auto max-w-md p-8 text-center">
-              <p className="text-sm font-medium">Untitled {draftKind}</p>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                A new {draftKind} is ready for its editor.
-              </p>
-            </div>
           ) : (
             <AssistantHome onOpenPage={openPage} workspace={workspace} />
           )}
-        </main>
+          </main>
         </SidebarInset>
       </AssistantSessionProvider>
     </SidebarProvider>
