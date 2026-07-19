@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { Folder, FolderOpen, LoaderCircle, Plus, RotateCcw } from "lucide-react";
+import { Folder, FolderOpen, LoaderCircle, Plus } from "lucide-react";
 
 import { Button } from "@heydesk/ui/components/button";
 import {
@@ -30,6 +30,7 @@ export function WorkspaceOnboarding() {
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
+  const [openingLabel, setOpeningLabel] = useState<string | null>(null);
 
   async function loadOverview() {
     setError(null);
@@ -44,6 +45,47 @@ export function WorkspaceOnboarding() {
     void loadOverview();
   }, []);
 
+  function handleWorkspaceReady(workspace: WorkspaceSummary) {
+    setOverview((current) =>
+      current
+        ? {
+            ...current,
+            recent: [workspace, ...current.recent.filter((item) => item.path !== workspace.path)],
+          }
+        : current,
+    );
+    setDialogMode(null);
+    setSelectedWorkspace(workspace);
+  }
+
+  async function openWorkspacePath(path: string, label: string) {
+    setError(null);
+    setOpeningLabel(label);
+    try {
+      handleWorkspaceReady(await openWorkspace(path));
+    } catch (openError) {
+      setError(toMessage(openError));
+    } finally {
+      setOpeningLabel(null);
+    }
+  }
+
+  async function chooseWorkspaceFolder() {
+    const pickWorkspaceFolder = window.heydeskDesktop?.pickWorkspaceFolder;
+    if (!pickWorkspaceFolder) {
+      setDialogMode("open");
+      return;
+    }
+
+    setError(null);
+    try {
+      const path = await pickWorkspaceFolder();
+      if (path) await openWorkspacePath(path, displayNameForPath(path));
+    } catch (pickError) {
+      setError(toMessage(pickError));
+    }
+  }
+
   if (selectedWorkspace) {
     return (
       <WorkspaceShell
@@ -54,74 +96,108 @@ export function WorkspaceOnboarding() {
   }
 
   return (
-    <main className="min-h-svh overflow-y-auto bg-background px-7 py-14 sm:px-12 md:px-16 md:py-20">
-      <section className="mx-auto flex w-full max-w-4xl flex-col justify-center md:min-h-[calc(100svh-10rem)]">
-        <header className="flex items-center gap-3.5">
-          <LogoMark className="size-11 shrink-0 text-logo-mark" />
-          <div>
-            <h1 className="font-brand text-2xl font-semibold tracking-tight">Heydesk</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">Your local AI workspace</p>
+    <main className="relative flex h-svh w-full overflow-hidden bg-background">
+      {openingLabel && (
+        <div
+          aria-live="polite"
+          className="absolute inset-0 z-50 grid place-items-center bg-background/85 backdrop-blur-sm"
+          role="status"
+        >
+          <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
+            <LoaderCircle className="size-4 animate-spin" />
+            Opening {openingLabel}…
           </div>
-        </header>
-
-        <div className="mt-10 grid gap-3 sm:grid-cols-2">
-          <WorkspaceAction
-            icon={Plus}
-            title="Create new workspace"
-            description="Start with a private workspace in Documents."
-            onClick={() => setDialogMode("create")}
-          />
-          <WorkspaceAction
-            icon={FolderOpen}
-            title="Open existing folder"
-            description="Use a folder you already have on this machine."
-            onClick={() => setDialogMode("open")}
-          />
         </div>
+      )}
 
-        <div className="mt-12 min-h-40">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
+      <section className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-hidden px-7 py-10 sm:px-12 sm:py-12">
+        <div className="my-auto flex min-h-0 flex-col gap-9">
+          <header className="flex shrink-0 items-center gap-3">
+            <LogoMark className="size-10 shrink-0 text-logo-mark" />
+            <div className="min-w-0">
+              <div className="flex items-baseline gap-2.5">
+                <h1 className="font-brand text-xl font-semibold tracking-tight">Heydesk</h1>
+                {window.heydeskDesktop?.appVersion && (
+                  <span className="font-mono text-[0.6875rem] text-muted-foreground">
+                    v{window.heydeskDesktop.appVersion}
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 text-xs text-muted-foreground">Your local AI workspace</p>
+            </div>
+          </header>
+
+          <div className="grid shrink-0 gap-3 sm:grid-cols-2">
+            <WorkspaceAction
+              icon={Plus}
+              title="Create new workspace"
+              description="Start with a private workspace in Documents."
+              onClick={() => setDialogMode("create")}
+            />
+            <WorkspaceAction
+              icon={FolderOpen}
+              title="Open existing folder"
+              description="Use a folder you already have on this machine."
+              onClick={() => void chooseWorkspaceFolder()}
+            />
+          </div>
+
+          {error && (
+            <div
+              className="flex shrink-0 items-center justify-between gap-4 rounded-xl border border-destructive/20 bg-destructive/5 px-3 py-2.5"
+              role="alert"
+            >
+              <p className="text-xs text-destructive">{error}</p>
+              <Button
+                className="h-auto shrink-0 px-1.5 py-0.5 text-xs text-destructive"
+                onClick={() => setError(null)}
+                variant="ghost"
+              >
+                Dismiss
+              </Button>
+            </div>
+          )}
+
+          <section className="flex min-h-0 flex-col" aria-labelledby="recent-workspaces-heading">
+            <h2
+              className="mb-2 shrink-0 font-mono text-xs font-medium tracking-wide text-muted-foreground uppercase"
+              id="recent-workspaces-heading"
+            >
               Recent
             </h2>
-            {error && (
-              <Button size="sm" variant="ghost" onClick={() => void loadOverview()}>
-                <RotateCcw /> Retry
-              </Button>
-            )}
-          </div>
 
-          {!overview && !error && (
-            <div className="mt-6 flex items-center gap-2 text-sm text-muted-foreground">
-              <LoaderCircle className="size-4 animate-spin" /> Loading workspaces…
-            </div>
-          )}
-          {error && <p className="mt-5 text-sm text-destructive">{error}</p>}
-          {overview?.recent.length === 0 && (
-            <div className="mt-6 rounded-3xl border border-dashed px-5 py-7 text-sm text-muted-foreground">
-              Your recently opened workspaces will appear here.
-            </div>
-          )}
-          {overview && overview.recent.length > 0 && (
-            <div className="mt-4 divide-y">
-              {overview.recent.map((workspace) => (
-                <button
-                  className="group flex w-full items-center gap-4 rounded-2xl px-2 py-4 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
-                  key={workspace.path}
-                  onClick={() => setSelectedWorkspace(workspace)}
-                  type="button"
-                >
-                  <Folder className="size-5 shrink-0 text-muted-foreground group-hover:text-foreground" />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">{workspace.name}</span>
-                    <span className="mt-0.5 block truncate text-sm text-muted-foreground">
-                      {workspace.path}
+            {!overview && !error && (
+              <div className="flex h-16 items-center justify-center text-muted-foreground" role="status">
+                <LoaderCircle className="size-4 animate-spin opacity-70" />
+                <span className="sr-only">Loading workspaces…</span>
+              </div>
+            )}
+            {overview?.recent.length === 0 && (
+              <p className="px-3 py-4 text-xs text-muted-foreground">
+                Workspaces you open will appear here for quick access.
+              </p>
+            )}
+            {overview && overview.recent.length > 0 && (
+              <div className="-mx-3 max-h-52 min-h-0 space-y-0.5 overflow-y-auto px-1">
+                {overview.recent.map((workspace) => (
+                  <Button
+                    className="group h-auto w-full justify-start gap-3 rounded-xl px-3 py-3 text-left"
+                    key={workspace.path}
+                    onClick={() => void openWorkspacePath(workspace.path, workspace.name)}
+                    variant="ghost"
+                  >
+                    <Folder className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{workspace.name}</span>
+                      <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
+                        {workspace.path}
+                      </span>
                     </span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
       </section>
 
@@ -129,18 +205,7 @@ export function WorkspaceOnboarding() {
         defaultLocation={overview?.defaultLocation ?? "~/Documents/Heydesk"}
         mode={dialogMode}
         onOpenChange={(open) => !open && setDialogMode(null)}
-        onWorkspaceReady={(workspace) => {
-          setOverview((current) =>
-            current
-              ? {
-                  ...current,
-                  recent: [workspace, ...current.recent.filter((item) => item.path !== workspace.path)],
-                }
-              : current,
-          );
-          setDialogMode(null);
-          setSelectedWorkspace(workspace);
-        }}
+        onWorkspaceReady={handleWorkspaceReady}
       />
     </main>
   );
@@ -155,19 +220,17 @@ type WorkspaceActionProps = {
 
 function WorkspaceAction({ icon: Icon, title, description, onClick }: WorkspaceActionProps) {
   return (
-    <button
-      className="group flex min-h-24 items-start gap-3.5 rounded-2xl border bg-card p-4 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+    <Button
+      className="h-auto min-h-20 flex-col items-start justify-start gap-1.5 rounded-xl bg-card/70 px-4 py-3.5 text-left whitespace-normal"
       onClick={onClick}
-      type="button"
+      variant="outline"
     >
-      <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground transition-colors group-hover:text-foreground">
+      <span className="flex items-center gap-2">
         <Icon className="size-4" />
+        <span className="font-heading text-sm font-medium">{title}</span>
       </span>
-      <span>
-        <span className="block font-heading text-base font-medium">{title}</span>
-        <span className="mt-1 block text-sm leading-5 text-muted-foreground">{description}</span>
-      </span>
-    </button>
+      <span className="text-xs leading-snug font-normal text-muted-foreground">{description}</span>
+    </Button>
   );
 }
 
@@ -263,4 +326,9 @@ function WorkspaceDialog({
 
 function toMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
+}
+
+function displayNameForPath(path: string): string {
+  const segments = path.split(/[/\\]/).filter(Boolean);
+  return segments.at(-1) ?? path;
 }
