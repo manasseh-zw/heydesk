@@ -411,27 +411,31 @@ adjacent temporary file and atomically renames it into place. A stale write is
 returned as an explicit conflict with the current disk version; it is never
 merged or overwritten silently.
 
-Markdown is first probed through the real Tiptap parser. When the parsed page
-round-trips without semantic loss, it uses the rich editor even if the syntax
-was not part of Heydesk's original hand-written allowlist. MDX and Markdown
-that Tiptap would rewrite or discard use the monospaced source editor instead.
-This runtime fallback is deliberate: broad rich rendering is useful, but
-preserving JSX, comments, expressions, frontmatter, and unsupported structures
-matters more than presenting every page as rich text.
+Markdown always opens directly in the Tiptap rich editor without a preflight
+allowlist or round-trip gate. Tiptap may canonicalize or discard syntax that is
+not represented by the installed editor extensions; Heydesk accepts that tradeoff
+in favor of a predictable rich page experience. MDX remains in the monospaced
+source editor because JSX and expressions are a different executable format,
+not ordinary Markdown.
 
-The workspace assistant remains one durable Codex thread and one shared browser
-session across Home and the page rail. A page send adds a server-built context
-envelope and revision, while preserving the user's actual message as the chat
-record. Selection rewrites are a different product operation: they run in an
-ephemeral, read-only Luna thread at low effort, return one structured
-replacement, and require Apply or Discard before a revision-checked write.
-They do not become assistant runs or conversation events.
+Conversation state follows the surface where the work happens. Home uses an
+ephemeral Codex thread that remains stable while the workspace is open, so an
+active turn survives navigation without becoming a permanent ChatGPT/Codex-app
+conversation. Every page owns a durable Codex thread keyed by its normalized
+page path, and every Word document owns a separate durable document thread.
+Opening an artifact never inherits another artifact's context. A page send adds
+a server-built context envelope and revision while preserving the user's actual
+message as the chat record. Selection rewrites are a different product
+operation: they run in an ephemeral, read-only Luna thread at low effort,
+return one structured replacement, and require Apply or Discard before a
+revision-checked write. They do not become assistant runs or conversation
+events.
 
-**Deferred:** Yjs/Hocuspocus, per-page conversation threads, rich arbitrary
-MDX, direct collaborative editing, and the visible model selector remain out of
-this slice. The filesystem and server are the only commit authority; streamed
-Codex diffs are temporary editor state until a verified artifact commit or final
-disk reconciliation.
+**Deferred:** Conversation-history navigation, explicit New Chat controls,
+Yjs/Hocuspocus, rich arbitrary MDX, and direct collaborative editing remain out
+of this slice. The filesystem and server are the only commit authority;
+streamed Codex diffs are temporary editor state until a verified artifact commit
+or final disk reconciliation.
 
 ### ADR-019 — Separate pages from assistant artifacts
 
@@ -574,6 +578,70 @@ An explicit content boundary prevents dependencies, build outputs, and project
 documentation from leaking into the sidebar, makes Codex's writable page scope
 auditable, and gives future conversion and export flows stable destinations.
 
+### ADR-023 — Let Codex request a bounded Word-document transition
+
+**Decision:** Word-document creation from Home begins as an ordinary Codex
+turn. Home exposes one server-executed dynamic tool,
+`workspace.create_document`, that accepts a visible filename and a bounded
+continuation context. Codex decides from the user's request whether the tool is
+appropriate, chooses the name, and distills only the relevant requirements and
+decisions from the Home conversation into a self-contained document task; the
+browser does not use regular expressions or preemptively create a file.
+
+When Codex calls the tool, the document service creates a valid blank DOCX,
+Heydesk emits a typed navigation event, and the UI opens the document editor.
+After the Home turn completes, the server starts a document-scoped turn with
+the Codex-authored continuation context as its first visible message and the
+exact new document revision. The full Home transcript is not copied into the
+new thread. That turn is
+read-only at the filesystem boundary and can populate the file only through
+Heydesk's typed document tools. No shell script, raw OOXML, or broad workspace
+permission participates in the transition.
+
+Home and page writable roots remain restricted to `pages/`. Home command,
+permission, and unrelated file escalations are declined rather than presented
+as misleading broad-access choices. The selected composer action merely makes
+the user's instruction explicit to Codex; it does not execute client-side
+business logic.
+
+**Why:** Codex can generate DOCX files using scripts and raw OOXML, but that
+path is slower, bypasses the native editor and tracked-change contract, leaves
+helper files behind, and requires authority unrelated to the user's intent.
+Creating the durable artifact through a Codex-selected typed action preserves
+visible agent reasoning while keeping creation, revision checks, formatting,
+and saves inside the same bounded document workflow used for later edits.
+
+Assistant UI subscriptions are also independent from run lifetime. Navigating
+away closes only that surface's SSE listener; it does not interrupt Codex.
+Scoped events and snapshots continue to persist in the workspace database.
+When a surface remounts, it first fetches and atomically hydrates one fresh
+snapshot, then opens SSE after that snapshot's sequence number. Historical
+messages therefore render at once while only genuinely newer activity streams
+live. Only an explicit Stop action calls `turn/interrupt`. The Home session ID
+remains stable while a workspace is open, so switching among Home, pages, and
+documents does not silently replace the active Home conversation.
+
+### ADR-024 — Convert pages to independent Word snapshots on demand
+
+**Decision:** A saved Markdown page can be opened as a Word document through a
+server-owned conversion operation. The server verifies the exact page
+revision, converts the Markdown with `@mohtasham/md-to-docx`, validates and
+atomically imports the resulting DOCX through the existing Documents domain,
+then returns its durable path. The client refreshes Documents and opens that
+path in the native document editor. Repeated conversions choose a new visible
+filename instead of overwriting an earlier document.
+
+The converted DOCX is an independent snapshot. Editing it does not mutate or
+remain synchronized with the source page, and MDX is excluded because its JSX
+and expressions do not have a lossless Word representation. Remote image
+fetching is disabled during conversion so opening a page as Word cannot
+silently introduce network access.
+
+**Why:** Pages are the fast drafting surface while Documents are the polished,
+portable Word surface. A deliberate snapshot transition makes that product
+journey visible without weakening either durable boundary or creating a
+two-way synchronization problem before the user asks for one.
+
 ## Challenges and what they taught us
 
 ### Protocol shape is part of the product
@@ -632,7 +700,7 @@ the table model is complete.
 - Table schema editing and migrations.
 - Attachments and external integrations.
 - Voice/realtime conversations.
-- Document generation and export.
+- Document templates and richer export presets.
 - Collaboration and multi-device sync.
 
 ## The next clean implementation
