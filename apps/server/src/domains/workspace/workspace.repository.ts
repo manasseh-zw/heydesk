@@ -2,6 +2,11 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { WorkspaceSummary } from "./workspace.types";
+import {
+  applicationWorkspaceStatePath,
+  resolveWorkspaceEnvironment,
+  type WorkspaceEnvironment,
+} from "./workspace.paths";
 
 type RecentWorkspaceFile = {
   version: 1;
@@ -41,8 +46,14 @@ export class WorkspaceRepository {
   }
 }
 
-export function createWorkspaceStateFile(homeDirectory: string): string {
-  return join(homeDirectory, ".heydesk", "workspaces.json");
+export function createWorkspaceStateFile(
+  homeDirectory: string,
+  environment: WorkspaceEnvironment = resolveWorkspaceEnvironment(),
+): string {
+  return join(
+    applicationWorkspaceStatePath(homeDirectory, environment),
+    "workspaces.json",
+  );
 }
 
 function isRecentWorkspaceFile(value: unknown): value is RecentWorkspaceFile {

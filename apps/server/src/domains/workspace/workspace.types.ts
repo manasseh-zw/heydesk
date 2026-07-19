@@ -6,7 +6,7 @@ export type WorkspaceSummary = {
 };
 
 export type WorkspaceManifest = {
-  version: 2;
+  version: 3;
   id: string;
   name: string;
   createdAt: string;

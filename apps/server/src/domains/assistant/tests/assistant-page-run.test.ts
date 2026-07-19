@@ -23,7 +23,11 @@ describe("page-scoped assistant runs", () => {
     const root = await mkdtemp(join(tmpdir(), "heydesk-page-run-"));
     temporaryDirectories.push(root);
     await mkdir(join(root, ".heydesk"));
-    await writeFile(join(root, "Notes.md"), "# Notes\n\nOriginal.");
+    await mkdir(join(root, "pages"));
+    await writeFile(
+      join(root, "pages", "Notes.md"),
+      "# Notes\n\nOriginal.",
+    );
     const workspaces = {
       getById: async () => ({
         id: "workspace-1",
@@ -34,7 +38,7 @@ describe("page-scoped assistant runs", () => {
     };
     const page = await new PageService(workspaces).read(
       "workspace-1",
-      "Notes.md",
+      "pages/Notes.md",
     );
     const codex = new FakeCodex();
     const service = new AssistantService(
@@ -50,7 +54,7 @@ describe("page-scoped assistant runs", () => {
       {
         context: {
           kind: "page",
-          path: "Notes.md",
+          path: "pages/Notes.md",
           expectedRevision: page.revision,
         },
         preferences: {
@@ -62,7 +66,7 @@ describe("page-scoped assistant runs", () => {
     );
 
     expect(run.userText).toBe("Make the opening clearer.");
-    expect(run.context).toMatchObject({ path: "Notes.md" });
+    expect(run.context).toMatchObject({ path: "pages/Notes.md" });
     const turn = codex.requests.find((request) => request.method === "turn/start");
     expect(turn?.params).toMatchObject({
       model: "gpt-5.6-luna",
@@ -72,7 +76,9 @@ describe("page-scoped assistant runs", () => {
       sandboxPolicy: { networkAccess: false },
     });
     const input = (turn?.params as { input: Array<{ text: string }> }).input[0]?.text;
-    expect(input).toContain("The user is currently viewing Notes.md.");
+    expect(input).toContain(
+      "The user is currently viewing pages/Notes.md.",
+    );
     expect(input).toContain(page.revision);
     expect(input).toContain("Make the opening clearer.");
 
@@ -80,7 +86,7 @@ describe("page-scoped assistant runs", () => {
       service.startRun("workspace-1", "run-stale", "Edit it.", {
         context: {
           kind: "page",
-          path: "Notes.md",
+          path: "pages/Notes.md",
           expectedRevision: "0".repeat(64),
         },
       }),

@@ -18,6 +18,7 @@ import {
 } from "@eigenpal/docx-editor-core/docx/rezip";
 
 import type { WorkspaceService } from "../workspace/workspace.service";
+import { workspaceDocumentsDirectory } from "../workspace/workspace.paths";
 import type {
   DocumentContent,
   DocumentFile,
@@ -43,7 +44,10 @@ export class DocumentService {
 
   async list(workspaceId: string): Promise<DocumentSummary[]> {
     const root = await this.root(workspaceId);
-    const paths = await discoverDocuments(root);
+    const documentsRoot = await realpath(
+      resolve(root, workspaceDocumentsDirectory),
+    );
+    const paths = await discoverDocuments(documentsRoot);
     return Promise.all(paths.map((path) => summaryFor(root, path))).then(
       (items) =>
         items.sort((left, right) =>
@@ -57,7 +61,7 @@ export class DocumentService {
   async create(workspaceId: string, requestedName: string): Promise<DocumentFile> {
     const root = await this.root(workspaceId);
     const name = normalizeNewName(requestedName);
-    const target = resolve(root, name);
+    const target = resolve(root, workspaceDocumentsDirectory, name);
     await assertNewTarget(root, target);
     const created = await ensureStandardDocumentStyles(
       new Uint8Array(await createEmptyDocx()),
@@ -77,7 +81,7 @@ export class DocumentService {
     await assertValidDocx(buffer);
     const root = await this.root(workspaceId);
     const name = normalizeNewName(requestedName);
-    const target = resolve(root, name);
+    const target = resolve(root, workspaceDocumentsDirectory, name);
     await assertNewTarget(root, target);
     await atomicCreate(target, buffer);
     return fileFor(root, target, buffer);
@@ -126,15 +130,12 @@ export class DocumentService {
   }
 }
 
-async function discoverDocuments(root: string): Promise<string[]> {
+async function discoverDocuments(documentsRoot: string): Promise<string[]> {
   const discovered: string[] = [];
-  const ignoredPaths = await readWorkspaceIgnorePaths(root);
   async function walk(directory: string): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       if (entry.name.startsWith(".")) continue;
       const path = resolve(directory, entry.name);
-      const workspacePath = relative(root, path).split(sep).join("/");
-      if (isIgnoredWorkspacePath(workspacePath, ignoredPaths)) continue;
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
         await walk(path);
@@ -147,34 +148,8 @@ async function discoverDocuments(root: string): Promise<string[]> {
       }
     }
   }
-  await walk(root);
+  await walk(documentsRoot);
   return discovered;
-}
-
-async function readWorkspaceIgnorePaths(root: string): Promise<Set<string>> {
-  const ignored = new Set(["node_modules", "dist", "build", "coverage"]);
-  try {
-    const source = await readFile(resolve(root, ".gitignore"), "utf8");
-    for (const line of source.split("\n")) {
-      const value = line.trim();
-      if (!value || value.startsWith("#") || value.startsWith("!")) continue;
-      const normalized = value
-        .replace(/^\//, "")
-        .replace(/\/$/, "")
-        .replaceAll("\\", "/");
-      if (normalized && !normalized.includes("*")) ignored.add(normalized);
-    }
-  } catch (error) {
-    if (!isMissingFileError(error)) throw error;
-  }
-  return ignored;
-}
-
-function isIgnoredWorkspacePath(path: string, ignored: Set<string>): boolean {
-  for (const ignoredPath of ignored) {
-    if (path === ignoredPath || path.startsWith(`${ignoredPath}/`)) return true;
-  }
-  return false;
 }
 
 async function resolveExistingDocument(
@@ -206,6 +181,8 @@ function normalizePath(requestedPath: string): string {
   const segments = normalized.split("/");
   if (
     normalized.startsWith("/") ||
+    segments[0] !== workspaceDocumentsDirectory ||
+    segments.length < 2 ||
     extname(normalized).toLowerCase() !== ".docx" ||
     segments.some(
       (segment) =>
@@ -222,11 +199,13 @@ function normalizeNewName(requestedName: string): string {
   const withExtension = trimmed.toLowerCase().endsWith(".docx")
     ? trimmed
     : `${trimmed}.docx`;
-  const normalized = normalizePath(withExtension);
-  if (normalized.includes("/")) {
-    throw new InvalidDocumentError("New documents must be created at the workspace root.");
+  if (withExtension.includes("/") || withExtension.includes("\\")) {
+    throw new InvalidDocumentError(
+      "New documents must be created directly inside Documents.",
+    );
   }
-  return normalized;
+  normalizePath(`${workspaceDocumentsDirectory}/${withExtension}`);
+  return withExtension;
 }
 
 async function assertNewTarget(root: string, target: string): Promise<void> {

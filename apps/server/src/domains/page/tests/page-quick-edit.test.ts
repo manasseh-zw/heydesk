@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -22,7 +22,11 @@ describe("PageQuickEditService", () => {
   it("uses an isolated Luna low-effort fast turn and returns structured output", async () => {
     const root = await mkdtemp(join(tmpdir(), "heydesk-quick-edit-test-"));
     temporaryDirectories.push(root);
-    await writeFile(join(root, "Notes.md"), "# Notes\n\nThis is rather wordy.");
+    await mkdir(join(root, "pages"));
+    await writeFile(
+      join(root, "pages", "Notes.md"),
+      "# Notes\n\nThis is rather wordy.",
+    );
     const workspaces = {
       getById: async () => ({
         id: "workspace-1",
@@ -33,7 +37,7 @@ describe("PageQuickEditService", () => {
     };
     const page = await new PageService(workspaces).read(
       "workspace-1",
-      "Notes.md",
+      "pages/Notes.md",
     );
     const codex = new FakeCodex();
     const service = new PageQuickEditService(
@@ -42,7 +46,7 @@ describe("PageQuickEditService", () => {
     );
 
     const result = await service.run("workspace-1", {
-      path: "Notes.md",
+      path: "pages/Notes.md",
       expectedRevision: page.revision,
       selectionMarkdown: "This is rather wordy.",
       command: "shorten",

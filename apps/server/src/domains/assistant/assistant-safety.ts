@@ -9,6 +9,7 @@ import {
 } from "node:path";
 
 import type { AssistantFileChange } from "./assistant.types";
+import { workspacePagesDirectory } from "../workspace/workspace.paths";
 
 export async function canAutoAcceptFileChanges(
   workspacePath: string,
@@ -32,6 +33,8 @@ export async function canAutoAcceptFileChanges(
     const relativePath = relative(canonicalWorkspace, target);
     const segments = relativePath.split(sep);
     if (
+      segments[0] !== workspacePagesDirectory ||
+      segments.length < 2 ||
       segments.some((segment) => segment.startsWith(".")) ||
       segments.includes(".heydesk") ||
       ![".md", ".mdx"].includes(extname(target).toLowerCase())

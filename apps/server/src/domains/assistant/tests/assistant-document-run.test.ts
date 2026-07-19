@@ -24,6 +24,7 @@ describe("document-scoped assistant runs", () => {
     const root = await mkdtemp(join(tmpdir(), "heydesk-document-run-"));
     temporaryDirectories.push(root);
     await mkdir(join(root, ".heydesk"));
+    await mkdir(join(root, "documents"));
     const workspaces = {
       getById: async () => ({
         id: "workspace-1",
@@ -55,7 +56,10 @@ describe("document-scoped assistant runs", () => {
       },
     );
 
-    expect(run.scope).toEqual({ kind: "document", path: "Proposal.docx" });
+    expect(run.scope).toEqual({
+      kind: "document",
+      path: "documents/Proposal.docx",
+    });
     const thread = codex.requests.find(({ method }) => method === "thread/start");
     expect(thread?.params).toMatchObject({
       cwd: root,

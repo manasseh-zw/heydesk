@@ -44,17 +44,25 @@ describe("assistant repository", () => {
     await mkdir(join(workspace, ".heydesk"));
     const first = new AssistantRepository("workspace-1", workspace, {
       kind: "document",
-      path: "First.docx",
+      path: "documents/First.docx",
     });
     const second = new AssistantRepository("workspace-1", workspace, {
       kind: "document",
-      path: "Second.docx",
+      path: "documents/Second.docx",
     });
     await first.saveThread("thread-first", "document-tools-v1");
     await second.saveThread("thread-second", "document-tools-v1");
 
-    const firstRun = completedDocumentRun("run-first", "thread-first", "First.docx");
-    const secondRun = completedDocumentRun("run-second", "thread-second", "Second.docx");
+    const firstRun = completedDocumentRun(
+      "run-first",
+      "thread-first",
+      "documents/First.docx",
+    );
+    const secondRun = completedDocumentRun(
+      "run-second",
+      "thread-second",
+      "documents/Second.docx",
+    );
     await first.createRun(firstRun);
     await second.createRun(secondRun);
     await first.appendEvent(firstRun.id, {
@@ -77,12 +85,12 @@ describe("assistant repository", () => {
       toolContractVersion: "document-tools-v1",
     });
     await expect(first.getSnapshot()).resolves.toMatchObject({
-      scope: { kind: "document", path: "First.docx" },
+      scope: { kind: "document", path: "documents/First.docx" },
       recentRuns: [{ id: "run-first" }],
       events: [{ event: { text: "First history" } }],
     });
     await expect(second.getSnapshot()).resolves.toMatchObject({
-      scope: { kind: "document", path: "Second.docx" },
+      scope: { kind: "document", path: "documents/Second.docx" },
       recentRuns: [{ id: "run-second" }],
       events: [{ event: { text: "Second history" } }],
     });

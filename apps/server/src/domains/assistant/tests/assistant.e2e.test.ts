@@ -25,6 +25,8 @@ describe.skipIf(!SHOULD_RUN)("assistant backend end-to-end", () => {
   beforeAll(async () => {
     workspacePath = await mkdtemp(join(tmpdir(), "heydesk-assistant-e2e-"));
     await mkdir(join(workspacePath, ".heydesk"));
+    await mkdir(join(workspacePath, "pages"));
+    await mkdir(join(workspacePath, "documents"));
     workspace = {
       id: randomUUID(),
       name: "Assistant end-to-end test",

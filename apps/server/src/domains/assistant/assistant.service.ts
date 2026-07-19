@@ -840,7 +840,7 @@ export class AssistantService {
         developerInstructions:
           scope.kind === "document"
             ? buildDocumentDeveloperInstructions(scope.path)
-            : "Operate only inside the current Heydesk workspace. Prefer readable Markdown or MDX artifacts. Never use network access. Treat .heydesk as private application state and do not modify it.",
+            : "Operate only inside the current Heydesk workspace. Create and update readable Markdown or MDX pages only inside pages/. Treat documents/ as user-owned Word content and .heydesk/ as private application state; do not modify either directly. Never use network access.",
         ...(scope.kind === "document"
           ? { dynamicTools: documentDynamicTools() }
           : {}),

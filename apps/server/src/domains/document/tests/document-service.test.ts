@@ -34,7 +34,10 @@ describe("DocumentService", () => {
     const created = await service.create("workspace-1", "Project brief");
     const content = await service.read("workspace-1", created.path);
 
-    expect(created).toMatchObject({ path: "Project brief.docx", name: "Project brief" });
+    expect(created).toMatchObject({
+      path: "documents/Project brief.docx",
+      name: "Project brief",
+    });
     expect(content.buffer.byteLength).toBeGreaterThan(100);
     const parsed = await parseDocx(arrayBuffer(content.buffer));
     const styles = parsed.package.styles?.styles ?? [];
@@ -57,7 +60,7 @@ describe("DocumentService", () => {
       rPr: { bold: true, fontSize: 40 },
     });
     await expect(service.list("workspace-1")).resolves.toMatchObject([
-      { path: "Project brief.docx" },
+      { path: "documents/Project brief.docx" },
     ]);
   });
 
@@ -80,10 +83,19 @@ describe("DocumentService", () => {
         ],
       ]),
     );
-    await writeFile(join(root, "Legacy.docx"), bytes(withHeading));
+    await writeFile(
+      join(root, "documents", "Legacy.docx"),
+      bytes(withHeading),
+    );
 
-    const repaired = await service.read("workspace-1", "Legacy.docx");
-    const stable = await service.read("workspace-1", "Legacy.docx");
+    const repaired = await service.read(
+      "workspace-1",
+      "documents/Legacy.docx",
+    );
+    const stable = await service.read(
+      "workspace-1",
+      "documents/Legacy.docx",
+    );
     const parsed = await parseDocx(arrayBuffer(repaired.buffer));
 
     expect(repaired.revision).toBe(stable.revision);
@@ -116,7 +128,10 @@ describe("DocumentService", () => {
     const root = await createWorkspace();
     const outside = await createWorkspace();
     await writeFile(join(outside, "Outside.docx"), "not a docx");
-    await symlink(join(outside, "Outside.docx"), join(root, "Linked.docx"));
+    await symlink(
+      join(outside, "Outside.docx"),
+      join(root, "documents", "Linked.docx"),
+    );
     const service = createService(root);
     await service.create("workspace-1", "Existing");
 
@@ -129,17 +144,16 @@ describe("DocumentService", () => {
     await expect(service.read("workspace-1", "../Outside.docx")).rejects.toBeInstanceOf(
       InvalidDocumentError,
     );
-    await expect(service.read("workspace-1", "Linked.docx")).rejects.toBeInstanceOf(
-      InvalidDocumentError,
-    );
+    await expect(
+      service.read("workspace-1", "documents/Linked.docx"),
+    ).rejects.toBeInstanceOf(InvalidDocumentError);
   });
 
-  it("does not discover documents inside ignored workspace directories", async () => {
+  it("discovers documents only inside the Documents directory", async () => {
     const root = await createWorkspace();
     const service = createService(root);
     const nested = join(root, "reference-sources");
     await mkdir(nested);
-    await writeFile(join(root, ".gitignore"), "reference-sources/\n");
     await writeFile(
       join(nested, "Reference.docx"),
       bytes(await createDocx(createDocumentWithText("Reference"))),
@@ -147,7 +161,7 @@ describe("DocumentService", () => {
     await service.create("workspace-1", "Visible");
 
     await expect(service.list("workspace-1")).resolves.toMatchObject([
-      { path: "Visible.docx" },
+      { path: "documents/Visible.docx" },
     ]);
   });
 });
@@ -156,6 +170,7 @@ async function createWorkspace(): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), "heydesk-document-"));
   temporaryDirectories.push(path);
   await mkdir(join(path, ".heydesk"));
+  await mkdir(join(path, "documents"));
   return path;
 }
 

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
+  link,
   readFile,
   readdir,
   realpath,
@@ -12,6 +13,7 @@ import {
 import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 
 import type { WorkspaceService } from "../workspace/workspace.service";
+import { workspacePagesDirectory } from "../workspace/workspace.paths";
 import type { Page, PageSummary } from "./page.types";
 
 const supportedExtensions = new Set([".md", ".mdx"]);
@@ -19,6 +21,7 @@ const maximumPageSize = 2 * 1024 * 1024;
 
 export class PageNotFoundError extends Error {}
 export class InvalidPagePathError extends Error {}
+export class PageAlreadyExistsError extends Error {}
 export class PageRevisionConflictError extends Error {
   constructor(readonly current: Page) {
     super("This page changed on disk.");
@@ -33,7 +36,8 @@ export class PageService {
   async list(workspaceId: string): Promise<PageSummary[]> {
     const workspace = await this.workspaces.getById(workspaceId);
     const root = await realpath(workspace.path);
-    const paths = await discoverPages(root);
+    const pagesRoot = await realpath(resolve(root, workspacePagesDirectory));
+    const paths = await discoverPages(pagesRoot);
     const pages = await Promise.all(
       paths.map((path) => this.readSummary(root, path)),
     );
@@ -49,6 +53,22 @@ export class PageService {
     const summary = await this.readSummary(root, pagePath);
     const content = await readFile(pagePath, "utf8");
     return createPage(summary, content);
+  }
+
+  async create(workspaceId: string, requestedName: string): Promise<Page> {
+    const workspace = await this.workspaces.getById(workspaceId);
+    const root = await realpath(workspace.path);
+    const { filename, title } = normalizeNewPageName(requestedName);
+    const target = resolve(root, workspacePagesDirectory, filename);
+    if (!isInside(root, target)) {
+      throw new InvalidPagePathError("That page path is not allowed.");
+    }
+    const content = `# ${title}\n\n`;
+    await atomicCreatePage(target, content);
+    return this.read(
+      workspaceId,
+      `${workspacePagesDirectory}/${filename}`,
+    );
   }
 
   async write(
@@ -116,10 +136,7 @@ function createPage(summary: PageSummary, content: string): Page {
     content,
     revision: revisionFor(content),
     syntax,
-    editorMode:
-      syntax === "mdx" || hasUnsupportedRichMarkdown(content)
-        ? "source"
-        : "rich",
+    editorMode: syntax === "mdx" ? "source" : "rich",
   };
 }
 
@@ -127,29 +144,61 @@ function revisionFor(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
 }
 
-function hasUnsupportedRichMarkdown(content: string): boolean {
-  return (
-    /^---\s*\n/u.test(content) ||
-    /<!--[\s\S]*?-->/u.test(content) ||
-    /<\/?[A-Za-z][^>]*>/u.test(content) ||
-    /^\s*\{[^\n]*\}\s*$/m.test(content) ||
-    /^\s*[-*]\s+\[[ xX]\]\s+/m.test(content) ||
-    /^\s*\[[^\]]+\]:\s+/m.test(content) ||
-    /!\[[^\]]*\]\([^)]*\)/u.test(content) ||
-    /^\s*\|?.+\|.+\|?\s*\n\s*\|?\s*:?-{3,}/m.test(content)
-  );
+function normalizeNewPageName(requestedName: string): {
+  filename: string;
+  title: string;
+} {
+  const trimmed = requestedName.trim();
+  if (!trimmed || trimmed.includes("/") || trimmed.includes("\\")) {
+    throw new InvalidPagePathError(
+      "New pages must be created directly inside Pages.",
+    );
+  }
+  const requestedExtension = extname(trimmed).toLowerCase();
+  if (requestedExtension && !supportedExtensions.has(requestedExtension)) {
+    throw new InvalidPagePathError("New pages must use Markdown or MDX.");
+  }
+  const filename = requestedExtension ? trimmed : `${trimmed}.md`;
+  const title = basename(filename, extname(filename)).trim();
+  if (!title || filename.startsWith(".")) {
+    throw new InvalidPagePathError("Choose a visible page name.");
+  }
+  return { filename, title };
 }
 
-async function discoverPages(root: string): Promise<string[]> {
+async function atomicCreatePage(path: string, content: string): Promise<void> {
+  const temporaryPath = resolve(
+    dirname(path),
+    `.${basename(path)}.heydesk-${randomUUID()}.tmp`,
+  );
+  try {
+    await writeFile(temporaryPath, content, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    try {
+      await link(temporaryPath, path);
+    } catch (error) {
+      if (isExistsError(error)) {
+        throw new PageAlreadyExistsError(
+          "A page with that name already exists.",
+        );
+      }
+      throw error;
+    }
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
+}
+
+async function discoverPages(pagesRoot: string): Promise<string[]> {
   const discovered: string[] = [];
-  const ignoredPaths = await readWorkspaceIgnorePaths(root);
 
   async function walk(directory: string): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       if (entry.name.startsWith(".")) continue;
       const path = resolve(directory, entry.name);
-      const workspacePath = relative(root, path).split(sep).join("/");
-      if (isIgnoredWorkspacePath(workspacePath, ignoredPaths)) continue;
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
         await walk(path);
@@ -163,34 +212,8 @@ async function discoverPages(root: string): Promise<string[]> {
     }
   }
 
-  await walk(root);
+  await walk(pagesRoot);
   return discovered;
-}
-
-async function readWorkspaceIgnorePaths(root: string): Promise<Set<string>> {
-  const ignored = new Set(["node_modules", "dist", "build", "coverage"]);
-  try {
-    const source = await readFile(resolve(root, ".gitignore"), "utf8");
-    for (const line of source.split("\n")) {
-      const value = line.trim();
-      if (!value || value.startsWith("#") || value.startsWith("!")) continue;
-      const normalized = value
-        .replace(/^\//, "")
-        .replace(/\/$/, "")
-        .replaceAll("\\", "/");
-      if (normalized && !normalized.includes("*")) ignored.add(normalized);
-    }
-  } catch (error) {
-    if (!isMissingFileError(error)) throw error;
-  }
-  return ignored;
-}
-
-function isIgnoredWorkspacePath(path: string, ignored: Set<string>): boolean {
-  for (const ignoredPath of ignored) {
-    if (path === ignoredPath || path.startsWith(`${ignoredPath}/`)) return true;
-  }
-  return false;
 }
 
 async function resolvePagePath(
@@ -201,6 +224,8 @@ async function resolvePagePath(
   const segments = normalized.split("/");
   if (
     normalized.startsWith("/") ||
+    segments[0] !== workspacePagesDirectory ||
+    segments.length < 2 ||
     segments.some(
       (segment) =>
         !segment || segment === "." || segment === ".." || segment.startsWith("."),
@@ -235,6 +260,14 @@ function isInside(root: string, candidate: string): boolean {
   return path !== ".." && !path.startsWith(`..${sep}`) && !path.startsWith(sep);
 }
 
+function isExistsError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "EEXIST"
+  );
+}
+
 function extractTitle(content: string): string | undefined {
   const match = content.match(/^#\s+(.+)$/m);
   return match?.[1]?.trim();
@@ -257,12 +290,4 @@ function extractExcerpt(content: string): string {
     .replace(/\s+/g, " ")
     .trim();
   return excerpt.length > 180 ? `${excerpt.slice(0, 177).trimEnd()}…` : excerpt;
-}
-
-function isMissingFileError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ENOENT"
-  );
 }

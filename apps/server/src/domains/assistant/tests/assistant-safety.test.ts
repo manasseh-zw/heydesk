@@ -10,7 +10,7 @@ describe("assistant file approval policy", () => {
     const workspace = await mkdtemp(join(tmpdir(), "heydesk-safety-"));
     expect(
       await canAutoAcceptFileChanges(workspace, [
-        { path: "Notes.md", kind: "add" },
+        { path: "pages/Notes.md", kind: "add" },
         { path: "pages/Brief.mdx", kind: "update" },
       ]),
     ).toBe(true);
@@ -28,6 +28,11 @@ describe("assistant file approval policy", () => {
     ).resolves.toBe(false);
     await expect(
       canAutoAcceptFileChanges(workspace, [{ path: "script.ts", kind: "add" }]),
+    ).resolves.toBe(false);
+    await expect(
+      canAutoAcceptFileChanges(workspace, [
+        { path: "Outside.md", kind: "add" },
+      ]),
     ).resolves.toBe(false);
     await expect(
       canAutoAcceptFileChanges(workspace, [

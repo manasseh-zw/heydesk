@@ -5,6 +5,7 @@ import {
   workspaceService,
 } from "../workspace/workspace.service";
 import {
+  createPageSchema,
   pagePathSchema,
   quickEditPageSchema,
   writePageSchema,
@@ -12,6 +13,7 @@ import {
 import { pageQuickEditService } from "./page-quick-edit.service";
 import {
   InvalidPagePathError,
+  PageAlreadyExistsError,
   PageNotFoundError,
   PageRevisionConflictError,
   PageService,
@@ -26,6 +28,35 @@ pageRoutes.get("/:workspaceId/pages", async (c) => {
   } catch (error) {
     if (error instanceof WorkspaceNotFoundError) {
       return c.json({ error: error.message }, 404);
+    }
+    throw error;
+  }
+});
+
+pageRoutes.post("/:workspaceId/pages", async (c) => {
+  const input = createPageSchema.safeParse(await readJson(c.req.raw));
+  if (!input.success) {
+    return c.json(
+      { error: input.error.issues[0]?.message ?? "Invalid page name." },
+      400,
+    );
+  }
+  try {
+    const page = await pageService.create(
+      c.req.param("workspaceId"),
+      input.data.name,
+    );
+    c.header("ETag", `"${page.revision}"`);
+    return c.json(page, 201);
+  } catch (error) {
+    if (error instanceof PageAlreadyExistsError) {
+      return c.json({ error: error.message }, 409);
+    }
+    if (error instanceof WorkspaceNotFoundError) {
+      return c.json({ error: error.message }, 404);
+    }
+    if (error instanceof InvalidPagePathError) {
+      return c.json({ error: error.message }, 400);
     }
     throw error;
   }

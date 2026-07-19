@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+export const createPageSchema = z.object({
+  name: z.string().trim().min(1, "Name this page.").max(120),
+});
+
 export const pagePathSchema = z.object({
   path: z.string().trim().min(1, "Choose a page."),
 });

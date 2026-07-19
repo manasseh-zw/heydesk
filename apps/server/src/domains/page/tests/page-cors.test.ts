@@ -5,7 +5,7 @@ import { app } from "../../../app";
 describe("page browser boundary", () => {
   it("allows revision-aware PUT saves through CORS", async () => {
     const response = await app.request(
-      "/api/workspaces/workspace-1/pages/content?path=Notes.md",
+      "/api/workspaces/workspace-1/pages/content?path=pages%2FNotes.md",
       {
         method: "OPTIONS",
         headers: {

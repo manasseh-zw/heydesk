@@ -3,6 +3,8 @@ import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
+import { initializeWorkspaceDb } from "@heydesk/db";
+
 import {
   WorkspaceRepository,
   createWorkspaceStateFile,
@@ -12,6 +14,14 @@ import type {
   WorkspaceOverview,
   WorkspaceSummary,
 } from "./workspace.types";
+import {
+  defaultWorkspaceLocation,
+  resolveWorkspaceEnvironment,
+  workspaceDocumentsPath,
+  workspacePagesPath,
+  workspaceStatePath,
+  type WorkspaceEnvironment,
+} from "./workspace.paths";
 
 export class WorkspaceConflictError extends Error {}
 export class WorkspaceNotFoundError extends Error {}
@@ -22,8 +32,9 @@ export class WorkspaceService {
   constructor(
     private readonly repository: WorkspaceRepository,
     homeDirectory = homedir(),
+    environment: WorkspaceEnvironment = resolveWorkspaceEnvironment(),
   ) {
-    this.defaultLocation = join(homeDirectory, "Documents", "Heydesk");
+    this.defaultLocation = defaultWorkspaceLocation(homeDirectory, environment);
   }
 
   async getOverview(): Promise<WorkspaceOverview> {
@@ -34,6 +45,7 @@ export class WorkspaceService {
           workspace.path,
           workspace.name,
         );
+        await ensureWorkspaceLayout(workspace.path);
         recent.push({ ...workspace, id: manifest.id, name: manifest.name });
       } catch (error) {
         if (!isMissingFileError(error)) throw error;
@@ -56,16 +68,16 @@ export class WorkspaceService {
       );
     }
 
-    await mkdir(join(workspacePath, ".heydesk"), { recursive: true });
+    await ensureWorkspaceLayout(workspacePath);
     const manifest: WorkspaceManifest = {
-      version: 2,
+      version: 3,
       id: randomUUID(),
       name,
       createdAt: new Date().toISOString(),
     };
     await writeManifest(workspacePath, manifest, "wx");
     await writeFile(
-      join(workspacePath, "Welcome.md"),
+      join(workspacePagesPath(workspacePath), "Welcome.md"),
       `# Welcome to ${name}\n\nThis workspace belongs to you.\n`,
       { encoding: "utf8", flag: "wx" },
     );
@@ -89,6 +101,7 @@ export class WorkspaceService {
       workspacePath,
       basename(workspacePath),
     );
+    await ensureWorkspaceLayout(workspacePath);
     return this.remember(manifest, workspacePath);
   }
 
@@ -128,7 +141,7 @@ export class WorkspaceService {
     workspacePath: string,
     fallbackName: string,
   ): Promise<WorkspaceManifest> {
-    const manifestPath = join(workspacePath, ".heydesk", "workspace.json");
+    const manifestPath = join(workspaceStatePath(workspacePath), "workspace.json");
     try {
       const value: unknown = JSON.parse(await readFile(manifestPath, "utf8"));
       if (isWorkspaceManifest(value)) return value;
@@ -136,9 +149,9 @@ export class WorkspaceService {
       if (!isMissingFileError(error)) throw error;
     }
 
-    await mkdir(join(workspacePath, ".heydesk"), { recursive: true });
+    await ensureWorkspaceLayout(workspacePath);
     const manifest: WorkspaceManifest = {
-      version: 2,
+      version: 3,
       id: randomUUID(),
       name: fallbackName,
       createdAt: new Date().toISOString(),
@@ -149,9 +162,13 @@ export class WorkspaceService {
 }
 
 const homeDirectory = homedir();
+const workspaceEnvironment = resolveWorkspaceEnvironment();
 export const workspaceService = new WorkspaceService(
-  new WorkspaceRepository(createWorkspaceStateFile(homeDirectory)),
+  new WorkspaceRepository(
+    createWorkspaceStateFile(homeDirectory, workspaceEnvironment),
+  ),
   homeDirectory,
+  workspaceEnvironment,
 );
 
 async function pathExists(path: string): Promise<boolean> {
@@ -169,7 +186,7 @@ async function writeManifest(
   flag: "w" | "wx",
 ): Promise<void> {
   await writeFile(
-    join(workspacePath, ".heydesk", "workspace.json"),
+    join(workspaceStatePath(workspacePath), "workspace.json"),
     `${JSON.stringify(manifest, null, 2)}\n`,
     { encoding: "utf8", flag },
   );
@@ -179,11 +196,20 @@ function isWorkspaceManifest(value: unknown): value is WorkspaceManifest {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
   return (
-    candidate.version === 2 &&
+    candidate.version === 3 &&
     typeof candidate.id === "string" &&
     typeof candidate.name === "string" &&
     typeof candidate.createdAt === "string"
   );
+}
+
+async function ensureWorkspaceLayout(workspacePath: string): Promise<void> {
+  await Promise.all([
+    mkdir(workspaceStatePath(workspacePath), { recursive: true }),
+    mkdir(workspacePagesPath(workspacePath), { recursive: true }),
+    mkdir(workspaceDocumentsPath(workspacePath), { recursive: true }),
+  ]);
+  await initializeWorkspaceDb(workspacePath);
 }
 
 function isMissingFileError(error: unknown): boolean {

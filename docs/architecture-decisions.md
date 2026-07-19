@@ -411,13 +411,13 @@ adjacent temporary file and atomically renames it into place. A stale write is
 returned as an explicit conflict with the current disk version; it is never
 merged or overwritten silently.
 
-Supported Markdown is edited through Tiptap and serialized back to Markdown.
-MDX and Markdown containing constructs that the current extension set cannot
-round-trip losslessly use the monospaced source editor instead. This source
-fallback is deliberate: preserving JSX, comments, expressions, frontmatter,
-and unsupported structures matters more than presenting every page as rich
-text. Each newly supported Markdown construct needs a round-trip fixture before
-it can leave source mode.
+Markdown is first probed through the real Tiptap parser. When the parsed page
+round-trips without semantic loss, it uses the rich editor even if the syntax
+was not part of Heydesk's original hand-written allowlist. MDX and Markdown
+that Tiptap would rewrite or discard use the monospaced source editor instead.
+This runtime fallback is deliberate: broad rich rendering is useful, but
+preserving JSX, comments, expressions, frontmatter, and unsupported structures
+matters more than presenting every page as rich text.
 
 The workspace assistant remains one durable Codex thread and one shared browser
 session across Home and the page rail. A page send adds a server-built context
@@ -533,6 +533,46 @@ deep-linking, and public release promotion remain follow-on release work. The
 shell and server protocol are platform-neutral, but a platform is supported
 only after its Codex binary, native SQLite binding, filesystem behavior, and
 installer have run on that operating system.
+
+### ADR-022 — Make workspace content directories an explicit allowlist
+
+**Decision:** Every initialized workspace has one private state directory and
+two portable content roots:
+
+```text
+workspace/
+  .heydesk/
+    workspace.json
+    heydesk.sqlite
+  pages/
+    *.md
+    *.mdx
+  documents/
+    *.docx
+```
+
+Page discovery and writes are restricted to `pages/`. Word-document discovery,
+creation, import, and writes are restricted to `documents/`. Hidden entries and
+symlinks remain invalid inside either tree. Files elsewhere in an opened folder
+are ordinary user or repository content and never appear in Heydesk navigation.
+
+The SQLite database remains per workspace under `.heydesk/`; Heydesk no longer
+creates a process-global application database as a side effect of importing the
+database package. Workspace creation and opening initialize the manifest,
+database, and both content directories. The structural allowlist replaces the
+older repository-wide scan and its `.gitignore` heuristics, so a separate
+`.heydeskignore` file is unnecessary for the current product model.
+
+Packaged builds create workspaces under `~/Documents/Heydesk/<name>`. Local
+development uses `~/Documents/Heydesk/Dev/<name>` and a separate recent-list at
+`~/.heydesk/dev/workspaces.json`; tests use equivalent `Test` roots. This keeps
+fixtures and development conversations out of the installed application's
+workspace list without changing the portable layout inside a workspace.
+
+**Why:** The workspace is a document environment, not a source-tree browser.
+An explicit content boundary prevents dependencies, build outputs, and project
+documentation from leaking into the sidebar, makes Codex's writable page scope
+auditable, and gives future conversion and export flows stable destinations.
 
 ## Challenges and what they taught us
 
