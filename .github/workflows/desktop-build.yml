@@ -1,0 +1,104 @@
+name: Desktop build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-arm64:
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      CORS_ORIGIN: http://localhost:3001
+      DATABASE_URL: file:./desktop-build.db
+      VITE_SERVER_URL: http://localhost:3000
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - uses: pnpm/action-setup@v6
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test
+        run: pnpm test
+      - name: Check types
+        run: pnpm run check-types
+      - name: Build server and Electron bundles
+        run: pnpm run build:desktop
+      - name: Prepare native SQLite binding
+        working-directory: apps/desktop
+        run: node scripts/prepare-native.mjs darwin-arm64
+      - name: Resolve desktop version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "DESKTOP_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+            echo "DESKTOP_TAG=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+            echo "DESKTOP_RELEASE_KIND=tag" >> "$GITHUB_ENV"
+          elif [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            echo "DESKTOP_VERSION=0.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+            echo "DESKTOP_TAG=v0.0.${GITHUB_RUN_NUMBER}-preview" >> "$GITHUB_ENV"
+            echo "DESKTOP_RELEASE_KIND=prerelease" >> "$GITHUB_ENV"
+          else
+            VERSION=$(node -p "require('./apps/desktop/package.json').version")
+            echo "DESKTOP_VERSION=$VERSION" >> "$GITHUB_ENV"
+            echo "DESKTOP_RELEASE_KIND=artifact" >> "$GITHUB_ENV"
+          fi
+      - name: Package macOS application
+        working-directory: apps/desktop
+        run: |
+          if [[ -n "$CSC_LINK" && -n "$APPLE_ID" && -n "$APPLE_APP_SPECIFIC_PASSWORD" && -n "$APPLE_TEAM_ID" ]]; then
+            pnpm exec electron-builder --mac dmg zip --arm64 --publish never -c.mac.notarize=true -c.extraMetadata.version="$DESKTOP_VERSION"
+          elif [[ -n "$CSC_LINK" ]]; then
+            pnpm exec electron-builder --mac dmg zip --arm64 --publish never -c.mac.notarize=false -c.extraMetadata.version="$DESKTOP_VERSION"
+          else
+            CSC_IDENTITY_AUTO_DISCOVERY=false pnpm exec electron-builder --mac dmg zip --arm64 --publish never -c.mac.identity=null -c.mac.notarize=false -c.extraMetadata.version="$DESKTOP_VERSION"
+          fi
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: heydesk-macos-arm64-${{ github.sha }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish incremental prerelease
+        if: env.DESKTOP_RELEASE_KIND == 'prerelease'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$DESKTOP_TAG" >/dev/null 2>&1; then
+            gh release create "$DESKTOP_TAG" \
+              --generate-notes \
+              --notes-file .github/release-notes/desktop-prerelease.md \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "Heydesk $DESKTOP_TAG"
+          fi
+          gh release upload "$DESKTOP_TAG" apps/desktop/release/*.dmg apps/desktop/release/*.zip --clobber
+      - name: Create or update tagged draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --draft --generate-notes --title "Heydesk $GITHUB_REF_NAME"
+          fi
+          gh release upload "$GITHUB_REF_NAME" apps/desktop/release/*.dmg apps/desktop/release/*.zip --clobber

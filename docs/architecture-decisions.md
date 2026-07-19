@@ -483,8 +483,56 @@ completed, rejected, timed-out, and cancelled document tool calls without
 logging unbounded document content.
 
 **Deferred:** Collaborative editing, Yjs, document rename/delete, arbitrary
-layout and table mutation, Word coauthoring, and a desktop shell are not part
-of this vertical slice.
+layout and table mutation, and Word coauthoring are not part of this vertical
+slice.
+
+### ADR-021 — Package the existing local boundary with Electron
+
+**Decision:** Heydesk uses a narrow Electron shell rather than rewriting the
+local server in Rust. `apps/desktop` owns only application lifecycle,
+BrowserWindow security, renderer loading, and distribution. The existing Hono
+server runs in one supervised Electron utility process and remains the sole
+filesystem, SQLite, and Codex boundary.
+
+The utility process binds only to `127.0.0.1` on an operating-system-assigned
+port. In packaged builds it serves the immutable React renderer itself. The
+initial renderer navigation exchanges a cryptographically random bootstrap
+token for an HTTP-only, same-site session cookie; privileged `/api` requests
+from the packaged origin require that session. The renderer remains sandboxed
+with Node integration disabled and context isolation enabled.
+
+The server bundle includes ordinary JavaScript dependencies, while the
+platform-specific libSQL N-API binary is copied to `extraResources`. This
+keeps it outside ASAR and makes architecture selection explicit. The desktop
+shell resolves the Codex executable through the existing server policy, so the
+ChatGPT-bundled binary and an explicit `CODEX_BIN` remain supported without
+leaking process access into React.
+
+**Distribution:** Electron Builder produces an Apple Silicon `.app`, DMG, and
+ZIP first. Pull requests and `develop`/`main` pushes validate all workspace
+tests, types, and production bundles. Each `main` push also gates desktop
+packaging on tests and type checks, injects an incremental `0.0.<workflow run>`
+version, and publishes a matching `v0.0.<workflow run>-preview` GitHub
+prerelease with generated change notes. These automatic snapshots carry an
+explicit unsigned/Gatekeeper warning. Deliberate
+`v*` tags create or update a draft release so curated notes and stable
+promotion remain human-controlled. Signing and notarization activate only
+when the required Apple repository secrets are present; automatic unsigned
+output is never presented as a stable release.
+
+**Why Electron:** Both OpenKnowledge and T3 Code preserve their Node server
+and agent/process integrations behind Electron rather than adding a second
+runtime boundary. Tauri would require a platform-specific compiled Node
+sidecar or a Rust rewrite at the point where Heydesk's TypeScript integration
+is already proven. Electron is larger, but it exposes the actual packaging,
+native dependency, process lifecycle, and signing risks with the least product
+code churn.
+
+**Deferred:** Windows NSIS artifacts, Intel macOS builds, auto-update,
+deep-linking, and public release promotion remain follow-on release work. The
+shell and server protocol are platform-neutral, but a platform is supported
+only after its Codex binary, native SQLite binding, filesystem behavior, and
+installer have run on that operating system.
 
 ## Challenges and what they taught us
 
@@ -533,10 +581,12 @@ the table model is complete.
 - Bounded file-change approval policy.
 - SQLite + Drizzle structured persistence and inline table bindings.
 - Tiptap Markdown serialization, transient streamed editor drafts, and an AI cursor.
+- Electron desktop supervision with a packaged renderer, random loopback port,
+  native SQLite binding, and bounded shutdown.
 
 ### Intentionally deferred
 
-- Electron packaging.
+- Signed/notarized public desktop releases and Windows installer validation.
 - RxDB production storage and replication.
 - More allow-listed interactive MDX components.
 - Table schema editing and migrations.

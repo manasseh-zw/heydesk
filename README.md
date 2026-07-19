@@ -48,6 +48,42 @@ pnpm run dev
 Open [http://localhost:3001](http://localhost:3001) in your browser to see the web application.
 The API is running at [http://localhost:3000](http://localhost:3000).
 
+### Desktop development
+
+Heydesk also ships an Electron shell that supervises the same Hono server and
+React application used during browser development:
+
+```bash
+pnpm run dev:desktop
+```
+
+Build an unpacked Apple Silicon application for the fastest local packaging
+check:
+
+```bash
+pnpm run desktop:package:dir
+```
+
+Create unsigned Apple Silicon DMG and ZIP artifacts in
+`apps/desktop/release/`:
+
+```bash
+pnpm run desktop:package:mac:unsigned
+```
+
+Unsigned applications are development artifacts and will trigger macOS
+Gatekeeper on other machines. The desktop CI workflow can use the
+`CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`,
+`APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID` repository secrets to
+produce a signed and notarized build.
+
+Every push to `main` runs the desktop validation and packaging pipeline, then
+publishes an incremental `v0.0.x-preview` GitHub prerelease with generated
+change notes, a DMG, and a ZIP. These snapshots are intentionally marked as
+prereleases because builds remain unsigned until Apple signing credentials are
+configured. Pushing a deliberate `v*` tag creates a draft release instead, so
+its notes and promotion can be reviewed manually.
+
 ## UI Customization
 
 React web apps in this stack share shadcn/ui primitives through `packages/ui`.
@@ -80,7 +116,8 @@ If you want to add app-specific blocks instead of shared primitives, run the sha
 heydesk/
 ├── apps/
 │   ├── web/         # Frontend application (React + TanStack Router)
-│   └── server/      # Backend API (Hono)
+│   ├── server/      # Backend API (Hono)
+│   └── desktop/     # Electron lifecycle and packaging shell
 ├── packages/
 │   ├── ui/          # Shared shadcn/ui components and styles
 │   └── db/          # Database schema & queries
@@ -98,10 +135,13 @@ client operation, Hono route, domain service, and durable boundary.
 - `pnpm run build`: Build all applications
 - `pnpm run dev:web`: Start only the web application
 - `pnpm run dev:server`: Start only the server
+- `pnpm run dev:desktop`: Start the Electron app with live renderer updates
+- `pnpm run build:desktop`: Build the server, main, preload, and renderer bundles
+- `pnpm run desktop:package:dir`: Build an unpacked Apple Silicon app
+- `pnpm run desktop:package:mac:unsigned`: Build unsigned DMG and ZIP artifacts
 - `pnpm run check-types`: Check TypeScript types across all apps
 - `pnpm run db:push`: Push schema changes to database
 - `pnpm run db:generate`: Generate database client/types
 - `pnpm run db:migrate`: Run database migrations
 - `pnpm run db:studio`: Open database studio UI
 - `pnpm run db:local`: Start the local SQLite database
-
