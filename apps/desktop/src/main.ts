@@ -27,6 +27,8 @@ type ServerConnection = {
 const serverStartupTimeoutMs = 20_000;
 const openWorkspaceFolderChannel = "heydesk:dialog:open-workspace-folder";
 const setWindowModeChannel = "heydesk:window:set-mode";
+const prepareWorkspaceWindowChannel = "heydesk:window:prepare-workspace";
+const revealWorkspaceWindowChannel = "heydesk:window:reveal-workspace";
 let mainWindow: BrowserWindow | null = null;
 let serverProcess: UtilityProcess | null = null;
 let serverConnection: ServerConnection | null = null;
@@ -152,7 +154,7 @@ async function startServer(): Promise<ServerConnection> {
 
 function createWindow(apiOrigin: string): BrowserWindow {
   const window = new BrowserWindow({
-    backgroundColor: "#ffffff",
+    backgroundColor: process.platform === "darwin" ? "#00ffffff" : "#ffffff",
     height: 680,
     minHeight: 560,
     minWidth: 640,
@@ -162,7 +164,7 @@ function createWindow(apiOrigin: string): BrowserWindow {
     ...(process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: { x: 22, y: 24 },
+          trafficLightPosition: { x: 22, y: 16 },
         }
       : {}),
     webPreferences: {
@@ -201,6 +203,8 @@ function createWindow(apiOrigin: string): BrowserWindow {
 function registerDesktopHandlers(): void {
   ipcMain.removeHandler(openWorkspaceFolderChannel);
   ipcMain.removeHandler(setWindowModeChannel);
+  ipcMain.removeHandler(prepareWorkspaceWindowChannel);
+  ipcMain.removeHandler(revealWorkspaceWindowChannel);
   ipcMain.handle(
     openWorkspaceFolderChannel,
     async (event: IpcMainInvokeEvent): Promise<string | null> => {
@@ -219,6 +223,29 @@ function registerDesktopHandlers(): void {
     },
   );
   ipcMain.handle(
+    prepareWorkspaceWindowChannel,
+    async (event: IpcMainInvokeEvent): Promise<void> => {
+      const window = authorizedMainWindow(event);
+      if (process.platform === "darwin") {
+        window.setOpacity(0);
+        window.setVibrancy("under-window");
+      }
+      window.hide();
+      window.setMinimumSize(960, 640);
+      if (window.isMaximized()) return;
+      await resizeWindow(window, () => window.maximize());
+    },
+  );
+  ipcMain.handle(
+    revealWorkspaceWindowChannel,
+    (event: IpcMainInvokeEvent): void => {
+      const window = authorizedMainWindow(event);
+      window.show();
+      if (process.platform === "darwin") window.setOpacity(1);
+      window.focus();
+    },
+  );
+  ipcMain.handle(
     setWindowModeChannel,
     (event: IpcMainInvokeEvent, mode: unknown): void => {
       if (!mainWindow || event.sender.id !== mainWindow.webContents.id) {
@@ -234,11 +261,38 @@ function registerDesktopHandlers(): void {
         mainWindow.maximize();
         return;
       }
+      if (process.platform === "darwin") {
+        mainWindow.setOpacity(1);
+        mainWindow.setVibrancy(null);
+      }
       if (mainWindow.isMaximized()) mainWindow.unmaximize();
       mainWindow.setSize(920, 680, true);
       mainWindow.center();
     },
   );
+}
+
+function authorizedMainWindow(event: IpcMainInvokeEvent): BrowserWindow {
+  if (!mainWindow || event.sender.id !== mainWindow.webContents.id) {
+    throw new Error("Window controls are not available for this window.");
+  }
+  return mainWindow;
+}
+
+function resizeWindow(window: BrowserWindow, resize: () => void): Promise<void> {
+  return new Promise((complete) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      window.removeListener("resize", finish);
+      complete();
+    };
+    const timeout = setTimeout(finish, 350);
+    window.once("resize", finish);
+    resize();
+  });
 }
 
 async function loadRenderer(

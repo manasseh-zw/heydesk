@@ -129,6 +129,13 @@ export type AssistantDocumentHandoff = {
   revision: string;
 };
 
+export type AssistantPageHandoff = {
+  sourceRunId: string;
+  path: string;
+  title: string;
+  revision: string;
+};
+
 export type AssistantError = {
   code: string;
   message: string;
@@ -155,6 +162,7 @@ export type AssistantEvent =
   | { type: "document-tool.requested"; call: AssistantDocumentToolCall }
   | { type: "document-tool.resolved"; callId: string }
   | { type: "document.created"; handoff: AssistantDocumentHandoff }
+  | { type: "page.created"; handoff: AssistantPageHandoff }
   | { type: "content.committed"; content: AssistantContentCommit }
   | { type: "artifact.committed"; artifact: AssistantArtifact }
   | { type: "run.completed"; run: AssistantRun }

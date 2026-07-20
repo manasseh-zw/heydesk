@@ -117,6 +117,13 @@ export type AssistantDocumentHandoff = {
   revision: string;
 };
 
+export type AssistantPageHandoff = {
+  sourceRunId: string;
+  path: string;
+  title: string;
+  revision: string;
+};
+
 export type AssistantClientState = {
   readiness?: AssistantReadiness;
   activeRun: AssistantRun | null;
@@ -127,6 +134,7 @@ export type AssistantClientState = {
   artifacts: AssistantArtifact[];
   documentToolCalls: AssistantDocumentToolCall[];
   documentHandoff?: AssistantDocumentHandoff;
+  pageHandoff?: AssistantPageHandoff;
   error?: { code?: string; message: string };
 };
 

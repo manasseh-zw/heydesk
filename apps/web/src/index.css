@@ -1,1 +1,24 @@
 @import "@heydesk/ui/globals.css";
+
+svg.lucide {
+  stroke-width: 1.5;
+}
+
+.prose {
+  --tw-prose-bullets: color-mix(
+    in oklab,
+    var(--foreground) 72%,
+    transparent
+  );
+  --tw-prose-counters: color-mix(
+    in oklab,
+    var(--foreground) 78%,
+    transparent
+  );
+}
+
+html.workspace-splash,
+html.workspace-splash body,
+html.workspace-splash #root {
+  background: transparent !important;
+}

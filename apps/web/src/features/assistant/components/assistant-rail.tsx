@@ -13,6 +13,8 @@ import type { ComposerSubmission } from "@/features/workspace/workspace-assistan
 import type { AssistantRunPreferences } from "../assistant.types";
 import { AssistantHome } from "./assistant-home";
 
+export const defaultAssistantRailWidth = 380;
+
 type AssistantRailProps = {
   composerContext?: ComposerContext;
   disabled: boolean;

@@ -125,14 +125,14 @@ describe("Home assistant runs", () => {
       dynamicTools: [
         expect.objectContaining({
           name: "workspace",
-          tools: [
+          tools: expect.arrayContaining([
             expect.objectContaining({
               name: "create_document",
               inputSchema: expect.objectContaining({
                 required: ["name", "context"],
               }),
             }),
-          ],
+          ]),
         }),
       ],
     });
@@ -200,6 +200,111 @@ describe("Home assistant runs", () => {
       path: "documents/Microplastics Essay Outline.docx",
     });
     expect(documentSnapshot.activeRun?.userText).toBe(handoffContext);
+  });
+
+  it("lets Codex create a page and continues the original request in its scope", async () => {
+    const root = await mkdtemp(join(tmpdir(), "heydesk-home-page-"));
+    temporaryDirectories.push(root);
+    await mkdir(join(root, ".heydesk"));
+    await mkdir(join(root, "pages"));
+    await mkdir(join(root, "documents"));
+    const workspaces = {
+      getById: async () => ({
+        id: "workspace-1",
+        name: "Workspace",
+        path: root,
+        lastOpenedAt: new Date(0).toISOString(),
+      }),
+    };
+    const codex = new FakeCodex();
+    const service = new AssistantService(
+      codex as unknown as CodexAppServer,
+      workspaces,
+    );
+    const scope = {
+      kind: "home" as const,
+      sessionId: "019c88e4-8b7d-758f-81fd-6cc47c1d90b9",
+    };
+    const handoffContext =
+      "Create a reusable marketing-site brief with audience, positioning, page structure, calls to action, and launch criteria.";
+
+    await service.startRun("workspace-1", "run-home", "Create a marketing page.", {
+      scope,
+    });
+    const homeThread = codex.requests.find(
+      (request) => request.method === "thread/start",
+    );
+    expect(homeThread?.params).toMatchObject({
+      dynamicTools: [
+        expect.objectContaining({
+          name: "workspace",
+          tools: expect.arrayContaining([
+            expect.objectContaining({
+              name: "create_page",
+              inputSchema: expect.objectContaining({
+                required: ["name", "context"],
+              }),
+            }),
+          ]),
+        }),
+      ],
+    });
+
+    let toolResolution: unknown;
+    codex.emit("request", {
+      request: {
+        id: 3,
+        method: "item/tool/call",
+        params: {
+          threadId: "thread-home",
+          namespace: "workspace",
+          tool: "create_page",
+          callId: "create-page-1",
+          arguments: {
+            name: "Marketing Site Brief",
+            context: handoffContext,
+          },
+        },
+      },
+      resolve(value) {
+        toolResolution = value;
+      },
+      reject() {
+        throw new Error("The typed workspace tool should resolve.");
+      },
+    } satisfies CodexServerRequestResponder);
+    await vi.waitFor(() => expect(toolResolution).toBeDefined());
+    await expect(
+      stat(join(root, "pages", "Marketing Site Brief.md")),
+    ).resolves.toBeDefined();
+
+    const homeSnapshot = await service.getSnapshot("workspace-1", scope);
+    expect(
+      homeSnapshot.events.some(
+        ({ event }) =>
+          event.type === "page.created" &&
+          event.handoff.path === "pages/Marketing Site Brief.md",
+      ),
+    ).toBe(true);
+
+    codex.emit("notification", {
+      method: "turn/completed",
+      params: {
+        threadId: "thread-home",
+        turn: { id: "turn-home", status: "completed" },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(
+        codex.requests.filter((request) => request.method === "turn/start"),
+      ).toHaveLength(2),
+    );
+
+    const pageSnapshot = await service.getSnapshot("workspace-1", {
+      kind: "page",
+      path: "pages/Marketing Site Brief.md",
+    });
+    expect(pageSnapshot.activeRun?.userText).toBe(handoffContext);
   });
 });
 

@@ -67,6 +67,28 @@ describe("assistant AG-UI projector", () => {
     ]);
   });
 
+  it("projects a Codex-created page handoff", () => {
+    expect(
+      projectAssistantEvent({
+        type: "page.created",
+        handoff: {
+          sourceRunId: "run-home",
+          path: "pages/Marketing Site Brief.md",
+          title: "Marketing Site Brief",
+          revision: "a".repeat(64),
+        },
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        type: "CUSTOM",
+        name: "heydesk:page-created",
+        value: expect.objectContaining({
+          path: "pages/Marketing Site Brief.md",
+        }),
+      }),
+    ]);
+  });
+
   it("projects scoped content commits separately from artifacts", () => {
     expect(
       projectAssistantEvent({

@@ -1,8 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  ChevronRight,
+  File,
   FileText,
   FileUp,
+  Folder,
+  FolderOpen,
+  Folders,
   Home,
   Plus,
   Search,
@@ -52,9 +55,9 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
+  useSidebar,
 } from "@heydesk/ui/components/sidebar";
 
-import { LogoMark } from "@/components/logo";
 import { preloadDocumentView } from "@/features/document/components/lazy-document-view";
 import { documentsQueryOptions } from "@/features/document/document.queries";
 import type { DocumentSummary } from "@/features/document/document.types";
@@ -87,6 +90,7 @@ export function WorkspaceSidebar({
   activePagePath,
   activeDocumentPath,
 }: WorkspaceSidebarProps) {
+  const { setOpen } = useSidebar();
   const isDesktop = Boolean(window.heydeskDesktop);
   const [query, setQuery] = useState("");
   const [creatingKind, setCreatingKind] = useState<
@@ -105,13 +109,16 @@ export function WorkspaceSidebar({
     const focusSearch = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
-        searchRef.current?.focus();
+        setOpen(true);
+        window.requestAnimationFrame(() => {
+          searchRef.current?.focus();
+        });
       }
     };
 
     window.addEventListener("keydown", focusSearch);
     return () => window.removeEventListener("keydown", focusSearch);
-  }, []);
+  }, [setOpen]);
 
   return (
     <Sidebar collapsible="offcanvas">
@@ -144,13 +151,14 @@ export function WorkspaceSidebar({
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
+                className="font-normal text-sidebar-foreground/85 data-active:font-normal"
                 isActive={
                   activePagePath === null && activeDocumentPath === null
                 }
                 onClick={onOpenHome}
                 tooltip="Home"
               >
-                <Home />
+                <Home strokeWidth={1.6} />
                 <span>Home</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -200,20 +208,17 @@ export function WorkspaceSidebar({
       </SidebarContent>
 
       <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              onClick={onSwitchWorkspace}
-              tooltip="Switch workspace"
-            >
-              <LogoMark className="text-logo-mark " />
-              <span className="font-brand font-light text-lg">Heydesk</span>
-              <span className="sr-only">
-                Current workspace: {workspace.name}
-              </span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+        <Button
+          className="w-full justify-start font-normal"
+          onClick={onSwitchWorkspace}
+          size="sm"
+          title={`Current workspace: ${workspace.name}`}
+          type="button"
+          variant="ghost"
+        >
+          <Folders />
+          Change workspace
+        </Button>
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
@@ -253,8 +258,9 @@ function ContentSection({
   searchQuery,
   onItemIntent,
 }: ContentSectionProps) {
-  const ItemIcon = FileText;
+  const ItemIcon = document ? FileText : File;
   const [open, setOpen] = useState(true);
+  const SectionIcon = open ? FolderOpen : Folder;
 
   useEffect(() => {
     if (creating) setOpen(true);
@@ -267,8 +273,11 @@ function ContentSection({
       open={open}
     >
       <SidebarGroup>
-        <SidebarGroupLabel render={<CollapsibleTrigger />}>
-          <ChevronRight className="transition-transform group-data-open/content-section:rotate-90" />
+        <SidebarGroupLabel
+          className="gap-2 text-[13px] font-normal text-sidebar-foreground/65"
+          render={<CollapsibleTrigger />}
+        >
+          <SectionIcon strokeWidth={1.5} />
           {label}
         </SidebarGroupLabel>
         {addControl ?? (
@@ -277,7 +286,7 @@ function ContentSection({
             onClick={onAdd}
             title={addLabel}
           >
-            <Plus />
+            <Plus strokeWidth={1.5} />
           </SidebarGroupAction>
         )}
         <CollapsibleContent>
@@ -293,7 +302,7 @@ function ContentSection({
               {items.map((item) => (
                 <SidebarMenuItem key={item.path}>
                   <SidebarMenuButton
-                    className="pl-7"
+                    className="pl-7 font-normal text-sidebar-foreground/85 data-active:font-normal [&_svg]:text-sidebar-foreground/70"
                     isActive={activePath === item.path}
                     onClick={() => onOpen(item.path)}
                     onFocus={onItemIntent}
@@ -301,7 +310,7 @@ function ContentSection({
                     size="sm"
                     tooltip={item.path}
                   >
-                    <ItemIcon />
+                    <ItemIcon strokeWidth={1.45} />
                     <span>{item.title}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -378,7 +387,7 @@ function DocumentAddMenu({
           disabled={busy}
           title="Add document"
         >
-          <Plus className="size-4" />
+          <Plus className="size-4" strokeWidth={1.5} />
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="end"
@@ -442,7 +451,7 @@ function InlineCreateItem({
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const ItemIcon = FileText;
+  const ItemIcon = document ? FileText : File;
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => inputRef.current?.focus());
@@ -482,7 +491,7 @@ function InlineCreateItem({
           void commit();
         }}
       >
-        <ItemIcon className="size-4 shrink-0" />
+        <ItemIcon className="size-4 shrink-0" strokeWidth={1.45} />
         <Input
           aria-label={document ? "Document name" : "Page name"}
           autoFocus

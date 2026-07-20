@@ -43,7 +43,10 @@ import { Input } from "@heydesk/ui/components/input";
 import { Textarea } from "@heydesk/ui/components/textarea";
 
 import { CodexIcon, MicrosoftWord } from "@/components/icons";
-import { AssistantRail } from "@/features/assistant/components/assistant-rail";
+import {
+  AssistantRail,
+  defaultAssistantRailWidth,
+} from "@/features/assistant/components/assistant-rail";
 import { useAssistantSession } from "@/features/assistant/assistant-session";
 import type { AssistantRunPreferences } from "@/features/assistant/assistant.types";
 import { documentKeys } from "@/features/document/document.queries";
@@ -158,13 +161,14 @@ function LoadedPageView({
   const [diskError, setDiskError] = useState<string>();
   const [railOpen, setRailOpen] = useState(true);
   const [mobileRailOpen, setMobileRailOpen] = useState(false);
-  const [railWidth, setRailWidth] = useState(420);
+  const [railWidth, setRailWidth] = useState(defaultAssistantRailWidth);
   const [quickEditLoading, setQuickEditLoading] = useState(false);
   const [quickEditError, setQuickEditError] = useState<string>();
   const [conversionError, setConversionError] = useState<string>();
   const [convertingToWord, setConvertingToWord] = useState(false);
   const [quickEditPreview, setQuickEditPreview] =
     useState<QuickEditPreview | null>(null);
+  const [quickEditAiRequest, setQuickEditAiRequest] = useState(0);
   const [sourceSelection, setSourceSelection] = useState({ from: 0, to: 0 });
   const contentRef = useRef(content);
   const revisionRef = useRef(revision);
@@ -376,6 +380,35 @@ function LoadedPageView({
     if (!editor) return { from: 0, to: 0 };
     return { from: editor.state.selection.from, to: editor.state.selection.to };
   };
+
+  useEffect(() => {
+    const openSelectedTextPrompt = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() !== "j" ||
+        !event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey ||
+        editorLocked
+      ) {
+        return;
+      }
+
+      const range = selection();
+      const selected =
+        editorMode === "rich" && editor
+          ? editor.state.doc.textBetween(range.from, range.to, "\n")
+          : contentRef.current.slice(range.from, range.to);
+      if (!selected.trim()) return;
+
+      event.preventDefault();
+      setQuickEditError(undefined);
+      setQuickEditAiRequest((request) => request + 1);
+    };
+
+    window.addEventListener("keydown", openSelectedTextPrompt);
+    return () => window.removeEventListener("keydown", openSelectedTextPrompt);
+  }, [editor, editorLocked, editorMode, sourceSelection]);
 
   const runQuickEdit = async (
     command: QuickEditCommand,
@@ -665,6 +698,7 @@ function LoadedPageView({
                   error={quickEditError}
                   editor={editor}
                   loading={quickEditLoading}
+                  openAiRequest={quickEditAiRequest}
                   onApply={() => void applyQuickEdit()}
                   onCancel={() => abortQuickEditRef.current?.abort()}
                   onDiscard={discardQuickEdit}
@@ -686,6 +720,7 @@ function LoadedPageView({
                     disabled={session.isRunning}
                     error={quickEditError}
                     loading={quickEditLoading}
+                    openAiRequest={quickEditAiRequest}
                     onApply={() => void applyQuickEdit()}
                     onCancel={() => abortQuickEditRef.current?.abort()}
                     onDiscard={discardQuickEdit}
@@ -748,6 +783,7 @@ function QuickEditMenu({
   error,
   editor,
   loading,
+  openAiRequest,
   onApply,
   onCancel,
   onDiscard,
@@ -760,6 +796,7 @@ function QuickEditMenu({
   error?: string;
   editor?: Editor;
   loading: boolean;
+  openAiRequest: number;
   onApply: () => void;
   onCancel: () => void;
   onDiscard: () => void;
@@ -770,6 +807,12 @@ function QuickEditMenu({
 }) {
   const [aiOpen, setAiOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
+
+  useEffect(() => {
+    if (openAiRequest === 0) return;
+    onOpenAi();
+    setAiOpen(true);
+  }, [openAiRequest]);
 
   if (loading) {
     return (

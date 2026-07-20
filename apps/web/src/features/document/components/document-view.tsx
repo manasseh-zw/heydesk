@@ -18,7 +18,6 @@ import {
   AlertCircle,
   AlertTriangle,
   CheckIcon,
-  FileTextIcon,
   LoaderCircleIcon,
   PanelRightOpenIcon,
 } from "lucide-react";
@@ -27,7 +26,11 @@ import "@eigenpal/docx-editor-react/styles.css";
 import "./document-editor.css";
 
 import { Button } from "@heydesk/ui/components/button";
-import { AssistantRail } from "@/features/assistant/components/assistant-rail";
+import { MicrosoftWord } from "@/components/icons";
+import {
+  AssistantRail,
+  defaultAssistantRailWidth,
+} from "@/features/assistant/components/assistant-rail";
 import { useAssistantSession } from "@/features/assistant/assistant-session";
 import type { AssistantRunPreferences } from "@/features/assistant/assistant.types";
 import {
@@ -120,7 +123,7 @@ export function DocumentView({
   const [conflict, setConflict] = useState<DocumentFile | null>(null);
   const [railOpen, setRailOpen] = useState(true);
   const [mobileRailOpen, setMobileRailOpen] = useState(false);
-  const [railWidth, setRailWidth] = useState(420);
+  const [railWidth, setRailWidth] = useState(defaultAssistantRailWidth);
   const editorRef = useRef<DocxEditorRef>(null);
   const loadedRef = useRef<LoadedDocument | null>(null);
   const statusRef = useRef<SaveStatus>("saved");
@@ -485,9 +488,9 @@ export function DocumentView({
           showMarginGuides
           showRuler
           renderLogo={() => (
-            <FileTextIcon
+            <MicrosoftWord
               aria-hidden="true"
-              className="size-5 text-muted-foreground"
+              className="size-5"
             />
           )}
           renderTitleBarRight={() => (

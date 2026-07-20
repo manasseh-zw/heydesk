@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld("heydeskDesktop", {
   pickWorkspaceFolder: () =>
     ipcRenderer.invoke("heydesk:dialog:open-workspace-folder") as Promise<string | null>,
   platform: process.platform,
+  prepareWorkspaceWindow: () =>
+    ipcRenderer.invoke("heydesk:window:prepare-workspace") as Promise<void>,
+  revealWorkspaceWindow: () =>
+    ipcRenderer.invoke("heydesk:window:reveal-workspace") as Promise<void>,
   setWindowMode: (mode: "launcher" | "workspace") =>
     ipcRenderer.invoke("heydesk:window:set-mode", mode) as Promise<void>,
 });

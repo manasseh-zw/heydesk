@@ -89,7 +89,7 @@ export function AssistantHome({
             <div className="-translate-y-8 flex flex-col items-center text-center">
               <div className="flex items-center gap-1.5">
                 <LogoMark className="size-5 shrink-0 text-logo-mark" />
-                <span className="font-brand text-lg font-light tracking-tight">
+                <span className="font-brand text-lg font-normal tracking-normal text-foreground/80">
                   Heydesk
                 </span>
               </div>

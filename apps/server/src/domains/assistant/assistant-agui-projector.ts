@@ -118,6 +118,8 @@ export function projectAssistantEvent(event: AssistantEvent): StreamChunk[] {
       return [custom("heydesk:document-tool-resolved", event)];
     case "document.created":
       return [custom("heydesk:document-created", event.handoff)];
+    case "page.created":
+      return [custom("heydesk:page-created", event.handoff)];
     case "content.committed":
       return [custom("heydesk:content-committed", event.content)];
     case "artifact.committed":

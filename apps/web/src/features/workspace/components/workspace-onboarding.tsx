@@ -1,4 +1,5 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Folder, FolderOpen, LoaderCircle, Plus } from "lucide-react";
 
 import { Button } from "@heydesk/ui/components/button";
@@ -15,6 +16,10 @@ import { Input } from "@heydesk/ui/components/input";
 import { Label } from "@heydesk/ui/components/label";
 
 import { LogoMark } from "@/components/logo";
+import { assistantKeys } from "@/features/assistant/assistant.queries";
+import { getAssistantReadiness } from "@/features/assistant/assistant.service";
+import { documentsQueryOptions } from "@/features/document/document.queries";
+import { pagesQueryOptions } from "@/features/page/page.queries";
 import {
   createWorkspace,
   getWorkspaceOverview,
@@ -24,13 +29,24 @@ import type { WorkspaceOverview, WorkspaceSummary } from "../workspace.types";
 import { WorkspaceShell } from "./workspace-shell";
 
 type DialogMode = "create" | "open" | null;
+type WorkspaceTransition =
+  | "idle"
+  | "mounting"
+  | "presenting"
+  | "splash"
+  | "revealing";
+
+const workspaceSplashDurationMs = 1_800;
+const workspaceSplashExitMs = 280;
 
 export function WorkspaceOnboarding() {
+  const queryClient = useQueryClient();
+  const openingRef = useRef(false);
   const [overview, setOverview] = useState<WorkspaceOverview | null>(null);
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
-  const [openingLabel, setOpeningLabel] = useState<string | null>(null);
+  const [transition, setTransition] = useState<WorkspaceTransition>("idle");
 
   async function loadOverview() {
     setError(null);
@@ -45,7 +61,69 @@ export function WorkspaceOnboarding() {
     void loadOverview();
   }, []);
 
-  function handleWorkspaceReady(workspace: WorkspaceSummary) {
+  useEffect(() => {
+    if (!selectedWorkspace || transition !== "mounting") return;
+    let cancelled = false;
+
+    const reveal = async () => {
+      await nextStablePaint();
+      if (cancelled) return;
+      setTransition("presenting");
+    };
+    void reveal();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWorkspace, transition]);
+
+  useEffect(() => {
+    if (!selectedWorkspace || transition !== "presenting") return;
+    let cancelled = false;
+
+    const reveal = async () => {
+      // Give the browser compositor a complete branded splash frame before
+      // asking Electron to expose the maximized native window.
+      await nextStablePaint();
+      try {
+        await window.heydeskDesktop?.revealWorkspaceWindow();
+      } catch (revealError) {
+        setError(toMessage(revealError));
+      }
+      if (cancelled) return;
+      setTransition("splash");
+    };
+    void reveal();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWorkspace, transition]);
+
+  useEffect(() => {
+    if (transition !== "splash") return;
+    const timer = window.setTimeout(
+      () => setTransition("revealing"),
+      workspaceSplashDurationMs,
+    );
+    return () => window.clearTimeout(timer);
+  }, [transition]);
+
+  useEffect(() => {
+    if (transition !== "revealing") return;
+    const timer = window.setTimeout(
+      () => setTransition("idle"),
+      workspaceSplashExitMs,
+    );
+    return () => window.clearTimeout(timer);
+  }, [transition]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle(
+      "workspace-splash",
+      transition !== "idle",
+    );
+  }, [transition]);
+
+  async function handleWorkspaceReady(workspace: WorkspaceSummary) {
     setOverview((current) =>
       current
         ? {
@@ -54,20 +132,35 @@ export function WorkspaceOnboarding() {
           }
         : current,
     );
-    void window.heydeskDesktop?.setWindowMode("workspace");
+    await Promise.allSettled([
+      queryClient.ensureQueryData(pagesQueryOptions(workspace.id)),
+      queryClient.ensureQueryData(documentsQueryOptions(workspace.id)),
+      queryClient.ensureQueryData({
+        queryKey: assistantKeys.readiness(),
+        queryFn: getAssistantReadiness,
+      }),
+    ]);
     setDialogMode(null);
+    setTransition("mounting");
+    try {
+      await window.heydeskDesktop?.prepareWorkspaceWindow();
+    } catch (transitionError) {
+      setTransition("idle");
+      throw transitionError;
+    }
     setSelectedWorkspace(workspace);
   }
 
-  async function openWorkspacePath(path: string, label: string) {
+  async function openWorkspacePath(path: string) {
+    if (openingRef.current) return;
+    openingRef.current = true;
     setError(null);
-    setOpeningLabel(label);
     try {
-      handleWorkspaceReady(await openWorkspace(path));
+      await handleWorkspaceReady(await openWorkspace(path));
     } catch (openError) {
       setError(toMessage(openError));
     } finally {
-      setOpeningLabel(null);
+      openingRef.current = false;
     }
   }
 
@@ -81,46 +174,64 @@ export function WorkspaceOnboarding() {
     setError(null);
     try {
       const path = await pickWorkspaceFolder();
-      if (path) await openWorkspacePath(path, displayNameForPath(path));
+      if (path) await openWorkspacePath(path);
     } catch (pickError) {
       setError(toMessage(pickError));
     }
   }
 
   if (selectedWorkspace) {
+    const workspaceVisible =
+      transition === "idle" || transition === "revealing";
     return (
-      <WorkspaceShell
-        onCloseWorkspace={() => {
-          void window.heydeskDesktop?.setWindowMode("launcher");
-          setSelectedWorkspace(null);
-        }}
-        workspace={selectedWorkspace}
-      />
+      <div
+        className={`relative size-full overflow-hidden ${transition === "idle" ? "bg-background" : "bg-transparent"}`}
+      >
+        <div
+          className={
+            workspaceVisible ? "size-full visible" : "size-full invisible"
+          }
+        >
+          <WorkspaceShell
+            onCloseWorkspace={() => {
+              void window.heydeskDesktop?.setWindowMode("launcher");
+              setSelectedWorkspace(null);
+            }}
+            workspace={selectedWorkspace}
+          />
+        </div>
+        {transition !== "idle" && (
+          <div
+            aria-label="Heydesk"
+            className={`fixed inset-0 z-[100] grid place-items-center bg-white/32 transition-opacity ease-out motion-reduce:transition-none ${transition === "revealing" ? "pointer-events-none opacity-0" : "opacity-100"}`}
+            role="status"
+            style={{ transitionDuration: `${workspaceSplashExitMs}ms` }}
+          >
+            <div
+              className={`flex items-center gap-2.5 transition-[opacity,transform] duration-350 ease-out motion-reduce:transition-none ${transition === "mounting" ? "translate-y-1 scale-[0.985] opacity-0" : "translate-y-0 scale-100 opacity-100"}`}
+            >
+              <LogoMark className="size-7 shrink-0 text-logo-mark" />
+              <span className="font-brand text-3xl font-normal tracking-normal text-foreground/80">
+                Heydesk
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
     );
   }
 
   return (
     <main className="relative flex h-full w-full overflow-hidden bg-background">
-      {openingLabel && (
-        <div
-          aria-live="polite"
-          className="absolute inset-0 z-50 grid place-items-center bg-background/85 backdrop-blur-sm"
-          role="status"
-        >
-          <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
-            <LoaderCircle className="size-4 animate-spin" />
-            Opening {openingLabel}…
-          </div>
-        </div>
-      )}
-
       <section className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-hidden px-7 py-10 sm:px-12 sm:py-12">
         <div className="my-auto flex min-h-0 flex-col gap-9">
           <header className="flex shrink-0 items-center gap-3">
             <LogoMark className="size-10 shrink-0 text-logo-mark" />
             <div className="min-w-0">
               <div className="flex items-baseline gap-2.5">
-                <h1 className="font-brand text-xl font-semibold tracking-tight">Heydesk</h1>
+                <h1 className="font-brand text-xl font-normal tracking-normal text-foreground/80">
+                  Heydesk
+                </h1>
                 {window.heydeskDesktop?.appVersion && (
                   <span className="font-mono text-[0.6875rem] text-muted-foreground">
                     v{window.heydeskDesktop.appVersion}
@@ -187,7 +298,7 @@ export function WorkspaceOnboarding() {
                   <Button
                     className="group h-auto w-full justify-start gap-3 rounded-xl px-3 py-3 text-left"
                     key={workspace.path}
-                    onClick={() => void openWorkspacePath(workspace.path, workspace.name)}
+                    onClick={() => void openWorkspacePath(workspace.path)}
                     variant="ghost"
                   >
                     <Folder className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
@@ -242,7 +353,7 @@ type WorkspaceDialogProps = {
   defaultLocation: string;
   mode: DialogMode;
   onOpenChange: (open: boolean) => void;
-  onWorkspaceReady: (workspace: WorkspaceSummary) => void;
+  onWorkspaceReady: (workspace: WorkspaceSummary) => Promise<void>;
 };
 
 function WorkspaceDialog({
@@ -269,7 +380,7 @@ function WorkspaceDialog({
     try {
       const workspace =
         mode === "create" ? await createWorkspace(value) : await openWorkspace(value);
-      onWorkspaceReady(workspace);
+      await onWorkspaceReady(workspace);
     } catch (submitError) {
       setError(toMessage(submitError));
     } finally {
@@ -332,7 +443,8 @@ function toMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
 }
 
-function displayNameForPath(path: string): string {
-  const segments = path.split(/[/\\]/).filter(Boolean);
-  return segments.at(-1) ?? path;
+function nextStablePaint(): Promise<void> {
+  return new Promise((complete) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => complete()));
+  });
 }

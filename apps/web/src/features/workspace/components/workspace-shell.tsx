@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { SquarePen } from "lucide-react";
 
 import {
   Breadcrumb,
@@ -17,6 +18,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@heydesk/ui/components/breadcrumb";
+import { Button } from "@heydesk/ui/components/button";
 import {
   SidebarInset,
   SidebarProvider,
@@ -31,6 +33,7 @@ import {
 } from "@/features/assistant/assistant-session";
 import type {
   AssistantDocumentHandoff,
+  AssistantPageHandoff,
   AssistantRunPreferences,
   AssistantScope,
 } from "@/features/assistant/assistant.types";
@@ -68,8 +71,11 @@ export function WorkspaceShell({
   const [activeDocumentPath, setActiveDocumentPath] = useState<string | null>(
     null,
   );
-  const [homeSessionId] = useState(() => crypto.randomUUID());
+  const [homeSessionId, setHomeSessionId] = useState(() =>
+    crypto.randomUUID(),
+  );
   const handledDocumentHandoffsRef = useRef(new Set<string>());
+  const handledPageHandoffsRef = useRef(new Set<string>());
   const flushContentRef = useRef<(() => Promise<void>) | null>(null);
 
   const afterFlush = async (navigate: () => void) => {
@@ -83,6 +89,13 @@ export function WorkspaceShell({
 
   const openHome = () => {
     void afterFlush(() => {
+      setActivePagePath(null);
+      setActiveDocumentPath(null);
+    });
+  };
+  const startNewChat = () => {
+    void afterFlush(() => {
+      setHomeSessionId(crypto.randomUUID());
       setActivePagePath(null);
       setActiveDocumentPath(null);
     });
@@ -144,6 +157,11 @@ export function WorkspaceShell({
     },
     [],
   );
+  const handlePageHandoff = useCallback((handoff: AssistantPageHandoff) => {
+    if (handledPageHandoffsRef.current.has(handoff.sourceRunId)) return;
+    handledPageHandoffsRef.current.add(handoff.sourceRunId);
+    openPage(handoff.path);
+  }, []);
   return (
     <SidebarProvider className="h-full overflow-hidden">
       <WorkspaceSidebar
@@ -160,10 +178,10 @@ export function WorkspaceShell({
       />
 
       <SidebarInset
-        className={`h-full min-h-0 overflow-hidden ${isDesktop ? "peer-data-[state=collapsed]:[--desktop-titlebar-reserve:78px]" : ""}`}
+        className={`z-20 h-full min-h-0 overflow-hidden shadow-[-5px_0_16px_-11px_rgba(15,23,42,0.16)] ${isDesktop ? "peer-data-[state=collapsed]:[--desktop-titlebar-reserve:78px]" : ""}`}
       >
         <header
-          className={`flex shrink-0 items-center gap-3 border-b pr-3 pl-[calc(0.75rem+var(--desktop-titlebar-reserve,0px))] transition-[padding] ${isDesktop ? "h-16 py-3 [-webkit-app-region:drag]" : "h-12"}`}
+          className={`flex h-12 shrink-0 items-center gap-3 border-b pr-3 pl-[calc(0.75rem+var(--desktop-titlebar-reserve,0px))] transition-[padding] ${isDesktop ? "py-2 [-webkit-app-region:drag]" : ""}`}
         >
           <SidebarTrigger
             className={isDesktop ? "[-webkit-app-region:no-drag]" : ""}
@@ -191,6 +209,16 @@ export function WorkspaceShell({
               </BreadcrumbItem>
             </BreadcrumbList>
           </Breadcrumb>
+          <Button
+            className={`ml-auto font-normal ${isDesktop ? "[-webkit-app-region:no-drag]" : ""}`}
+            onClick={startNewChat}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <SquarePen />
+            New chat
+          </Button>
         </header>
         <main className="flex min-h-0 flex-1 overflow-hidden">
           {activePagePath ? (
@@ -231,6 +259,7 @@ export function WorkspaceShell({
           ) : (
             <HomeAssistantSessionSurface
               onDocumentHandoff={handleDocumentHandoff}
+              onPageHandoff={handlePageHandoff}
               onOpenPage={openPage}
               sessionId={homeSessionId}
               workspace={workspace}
@@ -260,11 +289,13 @@ function ScopedAssistantSurface({
 
 function HomeAssistantSessionSurface({
   onDocumentHandoff,
+  onPageHandoff,
   onOpenPage,
   sessionId,
   workspace,
 }: {
   onDocumentHandoff: (handoff: AssistantDocumentHandoff) => void;
+  onPageHandoff: (handoff: AssistantPageHandoff) => void;
   onOpenPage: (path: string) => void;
   sessionId: string;
   workspace: WorkspaceSummary;
@@ -276,6 +307,7 @@ function HomeAssistantSessionSurface({
     >
       <HomeAssistantSurface
         onDocumentHandoff={onDocumentHandoff}
+        onPageHandoff={onPageHandoff}
         onOpenPage={onOpenPage}
         workspace={workspace}
       />
@@ -285,10 +317,12 @@ function HomeAssistantSessionSurface({
 
 function HomeAssistantSurface({
   onDocumentHandoff,
+  onPageHandoff,
   onOpenPage,
   workspace,
 }: {
   onDocumentHandoff: (handoff: AssistantDocumentHandoff) => void;
+  onPageHandoff: (handoff: AssistantPageHandoff) => void;
   onOpenPage: (path: string) => void;
   workspace: WorkspaceSummary;
 }) {
@@ -297,6 +331,10 @@ function HomeAssistantSurface({
     const handoff = session.state.documentHandoff;
     if (handoff) onDocumentHandoff(handoff);
   }, [onDocumentHandoff, session.state.documentHandoff]);
+  useEffect(() => {
+    const handoff = session.state.pageHandoff;
+    if (handoff) onPageHandoff(handoff);
+  }, [onPageHandoff, session.state.pageHandoff]);
   const sendHomeMessage = async (
     message: string,
     preferences?: AssistantRunPreferences,

@@ -197,7 +197,7 @@ export function HomeComposer({
         <div className="w-full px-2">
           <div className="flex items-center gap-2">
             <LogoMark className="size-6.5 shrink-0 text-logo-mark" />
-            <span className="font-brand text-3xl font-light tracking-tight">
+            <span className="font-brand text-3xl font-normal tracking-normal text-foreground/80">
               Heydesk
             </span>
           </div>
@@ -208,7 +208,7 @@ export function HomeComposer({
       )}
 
       <Composer
-        className={`${compact ? "rounded-2xl" : "mt-6 rounded-3xl"} w-full border border-border/60 shadow-[0_8px_24px_-16px_rgba(15,23,42,0.18)] focus-within:border-primary/25 focus-within:ring-1 focus-within:ring-primary/20 dark:border-border/70 dark:shadow-[0_8px_24px_-16px_rgba(0,0,0,0.45)]`}
+        className={`${compact ? "rounded-2xl" : "mt-6 rounded-3xl"} w-full border border-border/60 shadow-[0_8px_24px_-16px_rgba(15,23,42,0.18)] focus-within:border-primary/25 focus-within:ring-1 focus-within:ring-primary/20 dark:border-border/70 dark:shadow-[0_8px_24px_-16px_rgba(0,0,0,0.45)] [&_[data-slot=composer-toolbar]]:py-1.5`}
         disabled={disabled}
       >
         {selectedCommand && (
@@ -227,7 +227,7 @@ export function HomeComposer({
         )}
         <ComposerRichInput
           autoFocus={!compact}
-          className={`${compact ? "[&_[data-slot=composer-rich-input]]:max-h-40" : "[&_[data-slot=composer-rich-input]]:max-h-52"} [&_[data-slot=composer-rich-input]]:min-h-20 [&_[data-slot=composer-rich-input]]:px-4 [&_[data-slot=composer-rich-input]]:py-4 [&_[data-slot=composer-rich-input-skeleton]]:min-h-20 [&_[data-slot=composer-rich-input-skeleton]]:px-4 [&_[data-slot=composer-rich-input-skeleton]]:py-4`}
+          className={`${compact ? "[&_[data-slot=composer-rich-input]]:max-h-40" : "[&_[data-slot=composer-rich-input]]:max-h-44"} [&_[data-slot=composer-rich-input]]:min-h-18 [&_[data-slot=composer-rich-input]]:px-4 [&_[data-slot=composer-rich-input]]:py-3 [&_[data-slot=composer-rich-input-skeleton]]:min-h-18 [&_[data-slot=composer-rich-input-skeleton]]:px-4 [&_[data-slot=composer-rich-input-skeleton]]:py-3`}
           onSubmit={submit}
           onValueChange={setValue}
           placeholder={

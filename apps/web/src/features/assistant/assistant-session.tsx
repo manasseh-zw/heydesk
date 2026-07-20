@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { MessagePart } from "@tanstack/ai";
+import type { MessagePart, UIMessage } from "@tanstack/ai";
 import { useChat } from "@tanstack/ai-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -79,6 +79,9 @@ export function AssistantSessionProvider({
   const replayAfterSequenceRef = useRef<number | undefined>(undefined);
   const [hydratedScopeId, setHydratedScopeId] = useState<string | null>(null);
   const latestMessageIdRef = useRef<string | undefined>(undefined);
+  const messagesRef = useRef<UIMessage[]>([]);
+  const setMessagesRef = useRef<((messages: UIMessage[]) => void) | null>(null);
+  const observedRunMessageIdsRef = useRef(new Set<string>());
   const nextRunOptionsRef = useRef<{
     context?: AssistantRunContext;
     preferences?: AssistantRunPreferences;
@@ -121,6 +124,7 @@ export function AssistantSessionProvider({
   useEffect(() => {
     restoredRef.current = false;
     replayAfterSequenceRef.current = undefined;
+    observedRunMessageIdsRef.current.clear();
     setHydratedScopeId(null);
   }, [scopeId, workspace.id]);
 
@@ -140,6 +144,24 @@ export function AssistantSessionProvider({
     live: hydratedScopeId === scopeId,
     initialMessages: [],
     onCustomEvent(name, value) {
+      const runMessage = userMessageFromRunSnapshot(value);
+      if (name === "heydesk:run-snapshot" && runMessage) {
+        const current = messagesRef.current;
+        const latest = current.at(-1);
+        const alreadyObserved = observedRunMessageIdsRef.current.has(
+          runMessage.id,
+        );
+        const matchesCurrentMessage =
+          current.some((message) => message.id === runMessage.id) ||
+          (latest?.role === "user" &&
+            messageText(latest) === messageText(runMessage));
+        if (!alreadyObserved && !matchesCurrentMessage) {
+          const next = [...current, runMessage];
+          messagesRef.current = next;
+          setMessagesRef.current?.(next);
+        }
+        observedRunMessageIdsRef.current.add(runMessage.id);
+      }
       updateState((state) =>
         reduceCustomEvent(state, name, value, latestMessageIdRef.current),
       );
@@ -147,6 +169,16 @@ export function AssistantSessionProvider({
         void queryClient.invalidateQueries({
           queryKey: pageKeys.all(workspace.id),
         });
+        void queryClient.invalidateQueries({
+          queryKey: documentKeys.all(workspace.id),
+        });
+      }
+      if (name === "heydesk:page-created") {
+        void queryClient.invalidateQueries({
+          queryKey: pageKeys.all(workspace.id),
+        });
+      }
+      if (name === "heydesk:document-created") {
         void queryClient.invalidateQueries({
           queryKey: documentKeys.all(workspace.id),
         });
@@ -174,6 +206,8 @@ export function AssistantSessionProvider({
       }
     },
   });
+  messagesRef.current = chat.messages;
+  setMessagesRef.current = chat.setMessages;
   latestMessageIdRef.current = chat.messages.at(-1)?.id;
 
   useEffect(() => {
@@ -258,6 +292,29 @@ function isVisibleAssistantPart(part: MessagePart): boolean {
     return Boolean(part.content.trim());
   }
   return true;
+}
+
+function userMessageFromRunSnapshot(value: unknown): UIMessage | null {
+  const record = asRecord(value);
+  const run = asRecord(record.activeRun ?? record);
+  const id = recordString(run, "id");
+  const userText = recordString(run, "userText")?.trim();
+  if (!id || !userText) return null;
+  const createdAt = recordString(run, "createdAt");
+  return {
+    id: `${id}:user`,
+    role: "user",
+    createdAt: createdAt ? new Date(createdAt) : new Date(),
+    parts: [{ type: "text", content: userText }],
+  };
+}
+
+function messageText(message: UIMessage): string {
+  return message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.content)
+    .join("\n")
+    .trim();
 }
 
 function assistantScopeId(scope: AssistantScope): string {
@@ -358,6 +415,21 @@ function reduceCustomEvent(
       ...state,
       documentHandoff:
         handoff as AssistantClientState["documentHandoff"],
+    };
+  }
+  if (name === "heydesk:page-created") {
+    const handoff = asRecord(value);
+    if (
+      typeof handoff.sourceRunId !== "string" ||
+      typeof handoff.path !== "string" ||
+      typeof handoff.title !== "string" ||
+      typeof handoff.revision !== "string"
+    ) {
+      return state;
+    }
+    return {
+      ...state,
+      pageHandoff: handoff as AssistantClientState["pageHandoff"],
     };
   }
   if (name === "heydesk:run-snapshot") {

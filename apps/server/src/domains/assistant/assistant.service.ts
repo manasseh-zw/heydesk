@@ -40,6 +40,7 @@ import type {
   AssistantFileChange,
   AssistantInteraction,
   AssistantModel,
+  AssistantPageHandoff,
   AssistantReadiness,
   AssistantRun,
   AssistantRunContext,
@@ -54,8 +55,9 @@ const MODEL_CACHE_MS = 30_000;
 const DOCUMENT_TOOL_TIMEOUT_MS = 60_000;
 const DOCUMENT_TOOL_CONTRACT_VERSION = "document-tools-v6";
 const PAGE_ASSISTANT_CONTRACT_VERSION = "page-filesystem-v1";
-const WORKSPACE_TOOL_CONTRACT_VERSION = "workspace-tools-v2";
+const WORKSPACE_TOOL_CONTRACT_VERSION = "workspace-tools-v3";
 const WORKSPACE_CREATE_DOCUMENT_TOOL = "create_document";
+const WORKSPACE_CREATE_PAGE_TOOL = "create_page";
 const DOCUMENT_TOOL_NAMES = new Set([
   "read_document",
   "read_selection",
@@ -445,6 +447,12 @@ type PendingDocumentHandoff = {
   preferences: AssistantRunPreferences;
 };
 
+type PendingPageHandoff = {
+  handoff: AssistantPageHandoff;
+  context: string;
+  preferences: AssistantRunPreferences;
+};
+
 export class AssistantService {
   private readonly repositories = new Map<string, AssistantRepository>();
   private readonly reconciledWorkspaces = new Set<string>();
@@ -457,6 +465,7 @@ export class AssistantService {
     string,
     PendingDocumentHandoff
   >();
+  private readonly pendingPageHandoffs = new Map<string, PendingPageHandoff>();
   private modelCache: { expiresAt: number; models: CodexModel[] } | null = null;
   private readonly pages: PageService;
   private readonly documents: DocumentService;
@@ -1163,7 +1172,12 @@ export class AssistantService {
           status === "interrupted"
             ? undefined
             : this.pendingDocumentHandoffs.get(active.run.id);
+        const pageHandoff =
+          status === "interrupted"
+            ? undefined
+            : this.pendingPageHandoffs.get(active.run.id);
         this.pendingDocumentHandoffs.delete(active.run.id);
+        this.pendingPageHandoffs.delete(active.run.id);
         active.run.status =
           status === "interrupted" ? "interrupted" : "completed";
         active.run.completedAt = new Date().toISOString();
@@ -1172,6 +1186,9 @@ export class AssistantService {
         this.finishActive(active);
         if (documentHandoff) {
           await this.startDocumentHandoff(active, documentHandoff);
+        }
+        if (pageHandoff) {
+          await this.startPageHandoff(active, pageHandoff);
         }
       }
       return;
@@ -1433,8 +1450,11 @@ export class AssistantService {
     params: Record<string, unknown>,
   ): Promise<void> {
     const tool = stringValue(params.tool);
-    const parsed = createDocumentToolArgumentsSchema.safeParse(params.arguments);
-    if (this.pendingDocumentHandoffs.has(active.run.id)) {
+    const parsed = createArtifactToolArgumentsSchema.safeParse(params.arguments);
+    if (
+      this.pendingDocumentHandoffs.has(active.run.id) ||
+      this.pendingPageHandoffs.has(active.run.id)
+    ) {
       responder.resolve({
         contentItems: [
           {
@@ -1442,7 +1462,7 @@ export class AssistantService {
             text: JSON.stringify({
               success: false,
               error:
-                "A document has already been created for this request. Finish the Home turn so Heydesk can open it.",
+                "An artifact has already been created for this request. Finish the Home turn so Heydesk can open it.",
             }),
           },
         ],
@@ -1450,7 +1470,11 @@ export class AssistantService {
       });
       return;
     }
-    if (tool !== WORKSPACE_CREATE_DOCUMENT_TOOL || !parsed.success) {
+    if (
+      (tool !== WORKSPACE_CREATE_DOCUMENT_TOOL &&
+        tool !== WORKSPACE_CREATE_PAGE_TOOL) ||
+      !parsed.success
+    ) {
       responder.resolve({
         contentItems: [
           {
@@ -1458,8 +1482,9 @@ export class AssistantService {
             text: JSON.stringify({
               success: false,
               error:
-                tool === WORKSPACE_CREATE_DOCUMENT_TOOL
-                  ? (parsed.error?.issues[0]?.message ?? "Choose a valid document name.")
+                tool === WORKSPACE_CREATE_DOCUMENT_TOOL ||
+                tool === WORKSPACE_CREATE_PAGE_TOOL
+                  ? (parsed.error?.issues[0]?.message ?? "Choose a valid name.")
                   : "That workspace action is not available.",
             }),
           },
@@ -1470,6 +1495,43 @@ export class AssistantService {
     }
 
     try {
+      if (tool === WORKSPACE_CREATE_PAGE_TOOL) {
+        const page = await this.pages.create(active.workspace.id, parsed.data.name);
+        const handoff: AssistantPageHandoff = {
+          sourceRunId: active.run.id,
+          path: page.path,
+          title: page.title,
+          revision: page.revision,
+        };
+        this.pendingPageHandoffs.set(active.run.id, {
+          handoff,
+          context: parsed.data.context,
+          preferences: active.run.preferences ?? {
+            model: env.CODEX_MODEL,
+            effort: "medium",
+          },
+        });
+        await this.publish(active, { type: "page.created", handoff });
+        responder.resolve({
+          contentItems: [
+            {
+              type: "inputText",
+              text: JSON.stringify({
+                success: true,
+                page: {
+                  title: page.title,
+                  path: page.path,
+                  revision: page.revision,
+                },
+                next: "Finish this Home turn. Heydesk will open the page and continue from the handoff context.",
+              }),
+            },
+          ],
+          success: true,
+        });
+        return;
+      }
+
       const document = await this.documents.create(
         active.workspace.id,
         parsed.data.name,
@@ -1556,6 +1618,43 @@ export class AssistantService {
     }
   }
 
+  private async startPageHandoff(
+    source: ActiveRun,
+    pending: PendingPageHandoff,
+  ): Promise<void> {
+    try {
+      const current = await this.pages.read(
+        source.workspace.id,
+        pending.handoff.path,
+      );
+      await this.startRun(
+        source.workspace.id,
+        randomUUID(),
+        pending.context,
+        {
+          scope: { kind: "page", path: pending.handoff.path },
+          context: {
+            kind: "page",
+            path: pending.handoff.path,
+            expectedRevision: current.revision,
+          },
+          preferences: pending.preferences,
+        },
+      );
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          source: "assistant-page-handoff",
+          level: "error",
+          workspaceId: source.workspace.id,
+          sourceRunId: source.run.id,
+          path: pending.handoff.path,
+          message: toMessage(error),
+        }),
+      );
+    }
+  }
+
   private async handleCodexExit(error: Error): Promise<void> {
     for (const pending of this.pendingDocumentTools.values()) {
       clearTimeout(pending.timeout);
@@ -1595,6 +1694,7 @@ export class AssistantService {
     recoverable: boolean,
   ): Promise<void> {
     this.pendingDocumentHandoffs.delete(active.run.id);
+    this.pendingPageHandoffs.delete(active.run.id);
     active.run.status = "failed";
     active.run.completedAt = new Date().toISOString();
     const error = { code, message, recoverable };
@@ -1902,7 +2002,7 @@ function buildWorkspaceDeveloperInstructions(): string {
     "Do not expose shell commands, tool names, directories, filesystem paths, or implementation details unless the user asks for technical information.",
     "Heydesk has two distinct artifact types. A document always means a Microsoft Word .docx file in Documents. Never substitute a Markdown page when the user asks for a document.",
     "A page, draft, or note means a Markdown .md file in Pages unless the user explicitly says otherwise.",
-    "Create and update pages only inside pages/. Use ATX headings, paragraphs, bold, italic, strikethrough, inline or fenced code, blockquotes, ordered or unordered lists, links, horizontal rules, and ==highlight== syntax so the page remains compatible with Heydesk's TipTap editor.",
+    "When the user asks to create, draft, write, generate, or prepare a page, draft, or note, call workspace.create_page. Supply a concise user-facing title and a self-contained context brief that combines the current request with only the relevant requirements and decisions from this Home conversation. Write that context as a direct user task for the page assistant; do not mention handoffs, tools, threads, directories, or implementation details. After the tool succeeds, finish the Home turn; Heydesk will open the page and continue from that bounded context.",
     "Do not put YAML frontmatter, raw HTML, MDX or JSX, task lists, Markdown tables, footnotes, reference-style links, or embedded images in generated pages unless the user explicitly requests source-only content.",
     "When the user asks to create, draft, write, generate, or prepare a document, decide whether they mean a Word document and call workspace.create_document. Supply a concise user-facing filename and a self-contained context brief that combines the current document request with only the relevant requirements and decisions from this Home conversation. Write that context as a direct user task for the document assistant; do not mention handoffs, tools, threads, directories, or other implementation details. After the tool succeeds, finish the Home turn; Heydesk will open the blank document and continue from that bounded context through document tools.",
     "Never create scripts, helper programs, package files, build artifacts, or temporary files in the workspace. Do not generate Word files through Python, shell commands, ZIP manipulation, raw OOXML, or direct filesystem writes.",
@@ -2001,7 +2101,7 @@ function documentDynamicTools() {
   ];
 }
 
-const createDocumentToolArgumentsSchema = z
+const createArtifactToolArgumentsSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     context: z.string().trim().min(1).max(20_000),
@@ -2016,6 +2116,28 @@ function workspaceDynamicTools() {
       description:
         "Perform bounded Heydesk workspace actions that the visual application owns.",
       tools: [
+        {
+          type: "function" as const,
+          name: WORKSPACE_CREATE_PAGE_TOOL,
+          description:
+            "Create a Markdown page in Heydesk before page editing begins. Call this when the user asks to create a page, draft, or note. Choose a concise visible title and provide a self-contained handoff context distilled from the relevant conversation. Do not use shell or filesystem tools to create the page.",
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["name", "context"],
+            properties: {
+              name: {
+                type: "string",
+                description: "A concise visible page title.",
+              },
+              context: {
+                type: "string",
+                description:
+                  "A self-contained direct user task for the page assistant, containing the requested content and relevant constraints.",
+              },
+            },
+          },
+        },
         {
           type: "function" as const,
           name: WORKSPACE_CREATE_DOCUMENT_TOOL,
