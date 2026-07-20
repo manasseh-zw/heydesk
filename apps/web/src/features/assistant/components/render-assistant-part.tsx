@@ -2,6 +2,7 @@ import type { MessagePart } from "@tanstack/ai";
 import { useEffect, useState } from "react";
 
 import { Markdown } from "@/components/ai/markdown";
+import { Loader } from "@/components/ai/loader";
 import { MessageText } from "@/components/ai/message";
 import {
   Reasoning,
@@ -51,7 +52,13 @@ function AssistantReasoning({
   return (
     <Reasoning onOpenChange={setOpen} open={open}>
       <ReasoningTrigger>
-        {isStreaming ? "Summarizing reasoning" : "Reasoning summary"}
+        {isStreaming ? (
+          <Loader dots variant="shimmer">
+            Thinking
+          </Loader>
+        ) : (
+          "Reasoning summary"
+        )}
       </ReasoningTrigger>
       <ReasoningContent>
         <Markdown>{content}</Markdown>

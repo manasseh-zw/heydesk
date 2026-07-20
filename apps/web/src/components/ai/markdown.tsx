@@ -64,7 +64,14 @@ export function Markdown({
     <div
       data-slot="markdown"
       className={cn(
-        "prose prose-sm dark:prose-invert max-w-none min-w-0",
+        "prose prose-sm dark:prose-invert max-w-none min-w-0 text-foreground",
+        "prose-p:my-2 prose-p:leading-6.5 first:prose-p:mt-0 last:prose-p:mb-0",
+        "prose-headings:font-heading prose-headings:font-semibold prose-headings:tracking-tight",
+        "prose-h1:mb-3 prose-h1:mt-5 prose-h2:mb-2.5 prose-h2:mt-5 prose-h3:mb-2 prose-h3:mt-4",
+        "prose-ul:my-2.5 prose-ol:my-2.5 prose-li:my-1 prose-li:leading-6",
+        "prose-strong:font-semibold prose-a:text-primary prose-a:underline-offset-4 hover:prose-a:underline",
+        "prose-blockquote:my-3 prose-blockquote:border-primary/40 prose-blockquote:text-muted-foreground",
+        "prose-hr:my-5 prose-hr:border-border",
         className,
       )}
       {...props}

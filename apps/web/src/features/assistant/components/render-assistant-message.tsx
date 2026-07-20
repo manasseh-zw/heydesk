@@ -1,5 +1,5 @@
 import type { MessagePart } from "@tanstack/ai";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   FilePenLineIcon,
   FolderSearch2Icon,
@@ -17,18 +17,8 @@ import {
   ActionLabel,
   ActionTrigger,
 } from "@/components/ai/action";
-import {
-  AgentRun,
-  AgentRunContent,
-  AgentRunHeader,
-  AgentRunMeta,
-  AgentRunStep,
-  AgentRunText,
-  AgentRunTitle,
-} from "@/components/ai/agent-run";
 import { Chip } from "@/components/ai/chip";
-import { Markdown } from "@/components/ai/markdown";
-import { Status } from "@/components/ai/status";
+import { ThinkingIndicator } from "@heydesk/ui/components/thinking-indicator";
 import {
   parseActivityArguments,
   presentAssistantActivity,
@@ -54,18 +44,8 @@ export function RenderAssistantMessage({
     ));
   }
 
-  if (!parts.some((part) => part.type === "tool-call")) {
-    return parts.map((part, index) => (
-      <RenderAssistantPart
-        isStreaming={isStreaming && index === parts.length - 1}
-        key={index}
-        part={part}
-      />
-    ));
-  }
-
   return (
-    <AssistantAgentRun
+    <AssistantTimeline
       activityProgress={activityProgress}
       isStreaming={isStreaming}
       parts={parts}
@@ -76,7 +56,7 @@ export function RenderAssistantMessage({
 type ToolCallPart = Extract<MessagePart, { type: "tool-call" }>;
 type ToolResultPart = Extract<MessagePart, { type: "tool-result" }>;
 
-function AssistantAgentRun({
+function AssistantTimeline({
   activityProgress,
   isStreaming,
   parts,
@@ -85,88 +65,68 @@ function AssistantAgentRun({
   isStreaming: boolean;
   parts: MessagePart[];
 }) {
-  const calls = parts.filter(
-    (part): part is ToolCallPart => part.type === "tool-call",
-  );
   const results = new Map(
     parts
       .filter((part): part is ToolResultPart => part.type === "tool-result")
       .map((part) => [part.toolCallId, part]),
   );
-  const failed =
-    calls.some((part) => part.state === "error") ||
-    [...results.values()].some((part) => part.state === "error");
-  const hasPendingCall = calls.some(
-    (part) =>
-      part.state !== "complete" &&
-      part.state !== "error" &&
-      part.state !== "approval-requested",
-  );
-  const running = !failed && (isStreaming || hasPendingCall);
-  const state = failed ? "failed" : running ? "running" : "completed";
-  const visibleSteps = parts.filter(isVisibleRunStep);
-  const elapsed = useElapsedSeconds(running);
-  const title = agentRunTitle(calls, state);
+  const showWorking = useShowWorkingIndicator(parts, isStreaming);
 
   return (
-    <AgentRun defaultOpen state={state}>
-      <AgentRunHeader>
-        <AgentRunTitle>{title}</AgentRunTitle>
-        <Status
-          pulse={running}
-          size="sm"
-          state={failed ? "error" : running ? "inflight" : "active"}
-        >
-          {failed ? "Failed" : running ? "Running" : "Completed"}
-        </Status>
-        <AgentRunMeta>
-          <span className="tabular-nums">
-            {visibleSteps.length} {visibleSteps.length === 1 ? "step" : "steps"}
-          </span>
-          {elapsed !== null && (
-            <>
-              <span>·</span>
-              <span className="tabular-nums">{elapsed.toFixed(1)}s</span>
-            </>
-          )}
-        </AgentRunMeta>
-      </AgentRunHeader>
-      <AgentRunContent>
-        {parts.map((part, index) => {
-          if (part.type === "tool-result") return null;
-          if (part.type === "text" && part.content) {
-            return (
-              <AgentRunStep key={`text-${index}`}>
-                <AgentRunText>
-                  <Markdown>{part.content}</Markdown>
-                </AgentRunText>
-              </AgentRunStep>
-            );
-          }
-          if (part.type === "thinking" && part.content) {
-            return (
-              <AgentRunStep key={`thinking-${index}`}>
-                <RenderAssistantPart
-                  isStreaming={isStreaming && index === parts.length - 1}
-                  part={part}
-                />
-              </AgentRunStep>
-            );
-          }
-          if (part.type !== "tool-call") return null;
+    <div className="flex min-w-0 flex-col gap-2.5" data-slot="assistant-timeline">
+      {parts.map((part, index) => {
+        if (part.type === "tool-result") return null;
+        if (part.type === "text" || part.type === "thinking") {
           return (
-            <AgentRunStep key={part.id}>
-              <AgentAction
-                call={part}
-                progress={activityProgress[part.id]}
-                result={results.get(part.id)}
-              />
-            </AgentRunStep>
+            <RenderAssistantPart
+              isStreaming={isStreaming && index === parts.length - 1}
+              key={`${part.type}-${index}`}
+              part={part}
+            />
           );
-        })}
-      </AgentRunContent>
-    </AgentRun>
+        }
+        if (part.type !== "tool-call") return null;
+        return (
+          <AgentAction
+            call={part}
+            key={part.id}
+            progress={activityProgress[part.id]}
+            result={results.get(part.id)}
+          />
+        );
+      })}
+      {showWorking && <ThinkingIndicator className="px-0 py-1" />}
+    </div>
   );
+}
+
+// A run can remain busy for several seconds between streamed deltas. Waiting a
+// beat avoids flashing the indicator between ordinary tokens while ensuring a
+// quiet tool or reasoning interval never looks like the response has finished.
+function useShowWorkingIndicator(parts: MessagePart[], isStreaming: boolean) {
+  const [show, setShow] = useState(false);
+  const activityKey = parts
+    .map((part) => {
+      if (part.type === "text" || part.type === "thinking") {
+        return `${part.type}:${part.content.length}`;
+      }
+      if (part.type === "tool-call") return `call:${part.id}:${part.state}`;
+      if (part.type === "tool-result") return `result:${part.toolCallId}:${part.state}`;
+      return part.type;
+    })
+    .join("|");
+
+  useEffect(() => {
+    if (!isStreaming) {
+      setShow(false);
+      return;
+    }
+    setShow(false);
+    const timeout = window.setTimeout(() => setShow(true), 450);
+    return () => window.clearTimeout(timeout);
+  }, [activityKey, isStreaming]);
+
+  return show;
 }
 
 function AgentAction({
@@ -204,56 +164,6 @@ function AgentAction({
       </ActionContent>
     </Action>
   );
-}
-
-function isVisibleRunStep(part: MessagePart): boolean {
-  if (part.type === "tool-call") return true;
-  if (part.type === "text" || part.type === "thinking") return Boolean(part.content);
-  return false;
-}
-
-function useElapsedSeconds(running: boolean): number | null {
-  const startedAtRef = useRef<number | null>(null);
-  const [elapsed, setElapsed] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!running) {
-      if (startedAtRef.current !== null) {
-        setElapsed((performance.now() - startedAtRef.current) / 1_000);
-      }
-      return;
-    }
-    if (startedAtRef.current === null) startedAtRef.current = performance.now();
-    const update = () => {
-      if (startedAtRef.current !== null) {
-        setElapsed((performance.now() - startedAtRef.current) / 1_000);
-      }
-    };
-    update();
-    const interval = window.setInterval(update, 100);
-    return () => window.clearInterval(interval);
-  }, [running]);
-
-  return elapsed;
-}
-
-function agentRunTitle(
-  calls: ToolCallPart[],
-  state: "running" | "completed" | "failed",
-): string {
-  const names = calls.map((call) => call.name.toLowerCase());
-  const documentEdit = names.some((name) =>
-    ["suggest_change", "apply_formatting", "set_paragraph_style", "append_paragraphs"].some(
-      (tool) => name.includes(tool),
-    ),
-  );
-  const documentRead = names.some(
-    (name) => name.includes("document") || name.includes("find_text"),
-  );
-  if (state === "failed") return "Document work failed";
-  if (documentEdit) return state === "running" ? "Editing document" : "Edited document";
-  if (documentRead) return state === "running" ? "Reviewing document" : "Reviewed document";
-  return state === "running" ? "Working in workspace" : "Completed workspace work";
 }
 
 function toolIcon(name: string, failed: boolean) {

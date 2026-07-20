@@ -9,6 +9,36 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@keyframes text-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes text-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+@keyframes loading-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
 :root {
   --background: oklch(1 0 0);
   --foreground: oklch(0.148 0.004 228.8);
