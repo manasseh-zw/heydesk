@@ -52,7 +52,8 @@ import type {
 const INTERACTION_TIMEOUT_MS = 5 * 60_000;
 const MODEL_CACHE_MS = 30_000;
 const DOCUMENT_TOOL_TIMEOUT_MS = 60_000;
-const DOCUMENT_TOOL_CONTRACT_VERSION = "document-tools-v3";
+const DOCUMENT_TOOL_CONTRACT_VERSION = "document-tools-v6";
+const PAGE_ASSISTANT_CONTRACT_VERSION = "page-filesystem-v1";
 const WORKSPACE_TOOL_CONTRACT_VERSION = "workspace-tools-v2";
 const WORKSPACE_CREATE_DOCUMENT_TOOL = "create_document";
 const DOCUMENT_TOOL_NAMES = new Set([
@@ -66,7 +67,9 @@ const DOCUMENT_TOOL_NAMES = new Set([
   "add_comment",
   "suggest_change",
   "apply_formatting",
+  "apply_formatting_batch",
   "set_paragraph_style",
+  "set_paragraph_styles",
   "scroll",
   "append_paragraphs",
 ]);
@@ -74,7 +77,9 @@ const MUTATING_DOCUMENT_TOOLS = new Set([
   "add_comment",
   "suggest_change",
   "apply_formatting",
+  "apply_formatting_batch",
   "set_paragraph_style",
+  "set_paragraph_styles",
   "append_paragraphs",
 ]);
 
@@ -189,6 +194,16 @@ const setParagraphStyleArgumentsSchema = z
     styleId: z.string().trim().min(1).max(128),
   })
   .strict();
+const applyFormattingBatchArgumentsSchema = z
+  .object({
+    operations: z.array(applyFormattingArgumentsSchema).min(1).max(100),
+  })
+  .strict();
+const setParagraphStylesArgumentsSchema = z
+  .object({
+    operations: z.array(setParagraphStyleArgumentsSchema).min(1).max(100),
+  })
+  .strict();
 const appendParagraphRunSchema = z
   .object({
     text: z.string().max(4_000),
@@ -286,6 +301,104 @@ const appendParagraphsDynamicTool = {
                 },
               },
             },
+          },
+        },
+      },
+    },
+  },
+};
+
+function formattingMarksJsonSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      bold: { type: "boolean" },
+      italic: { type: "boolean" },
+      underline: {
+        anyOf: [
+          { type: "boolean" },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["style"],
+            properties: { style: { type: "string" } },
+          },
+        ],
+      },
+      strike: { type: "boolean" },
+      color: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          rgb: { type: "string" },
+          themeColor: { type: "string" },
+        },
+      },
+      highlight: { type: "string" },
+      fontSize: { type: "number" },
+      fontFamily: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          ascii: { type: "string" },
+          hAnsi: { type: "string" },
+        },
+      },
+    },
+  };
+}
+
+const applyFormattingBatchDynamicTool = {
+  type: "function" as const,
+  name: "apply_formatting_batch",
+  description:
+    "Apply bounded character-formatting operations to several existing paragraphs in one tool call and one save. Prefer this over repeated apply_formatting calls when a request affects multiple paragraphs.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["operations"],
+    properties: {
+      operations: {
+        type: "array",
+        minItems: 1,
+        maxItems: 100,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["paraId", "marks"],
+          properties: {
+            paraId: { type: "string" },
+            search: { type: "string" },
+            marks: formattingMarksJsonSchema(),
+          },
+        },
+      },
+    },
+  },
+};
+
+const setParagraphStylesDynamicTool = {
+  type: "function" as const,
+  name: "set_paragraph_styles",
+  description:
+    "Apply paragraph styles to several existing paragraphs in one tool call and one save. Prefer this over repeated set_paragraph_style calls.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["operations"],
+    properties: {
+      operations: {
+        type: "array",
+        minItems: 1,
+        maxItems: 100,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["paraId", "styleId"],
+          properties: {
+            paraId: { type: "string" },
+            styleId: { type: "string" },
           },
         },
       },
@@ -791,12 +904,11 @@ export class AssistantService {
         throw new AssistantConflictError("The reported document revision is not durable.");
       }
       await this.publish(pending.active, {
-        type: "artifact.committed",
-        artifact: {
-          id: `${pending.active.run.id}:${context.path}:${result.revision}`,
-          runId: pending.active.run.id,
+        type: "content.committed",
+        content: {
           path: context.path,
           kind: "document",
+          revision: result.revision,
         },
       });
     }
@@ -838,6 +950,8 @@ export class AssistantService {
     const expectedContract =
       scope.kind === "document"
         ? DOCUMENT_TOOL_CONTRACT_VERSION
+        : scope.kind === "page"
+          ? PAGE_ASSISTANT_CONTRACT_VERSION
         : scope.kind === "home"
           ? WORKSPACE_TOOL_CONTRACT_VERSION
           : undefined;
@@ -1107,6 +1221,10 @@ export class AssistantService {
         responder.resolve({ decision: "accept" });
         return;
       }
+      if (active.run.scope.kind === "page") {
+        responder.resolve({ decision: "decline" });
+        return;
+      }
     }
 
     if (
@@ -1173,6 +1291,22 @@ export class AssistantService {
         change.path,
       );
       if (!artifactPath || !/\.mdx?$/i.test(artifactPath)) continue;
+      if (
+        active.run.scope.kind === "page" &&
+        active.run.context?.kind === "page" &&
+        artifactPath === active.run.context.path
+      ) {
+        const page = await this.pages.read(active.workspace.id, artifactPath);
+        await this.publish(active, {
+          type: "content.committed",
+          content: {
+            path: artifactPath,
+            kind: "page",
+            revision: page.revision,
+          },
+        });
+        continue;
+      }
       await this.publish(active, {
         type: "artifact.committed",
         artifact: {
@@ -1747,12 +1881,6 @@ function buildCodexInput(
     return [
       "[Heydesk document context]",
       `The user currently has the Word document ${JSON.stringify(basename(context.path))} open in the Heydesk document editor.`,
-      `Its exact internal file reference is ${JSON.stringify(context.path)}. Use that reference directly; do not search for the active document.`,
-      `The durable document revision before this turn is ${context.expectedRevision}.`,
-      "Use the document namespace tools for all inspection and edits.",
-      "Use append_paragraphs once for new multi-paragraph structure. Use suggest_change for reviewable replacements inside existing paragraphs.",
-      "Use apply_formatting or set_paragraph_style when the user asks for formatting.",
-      `In the response, call it ${JSON.stringify(basename(context.path))} or "this document" rather than repeating its internal path.`,
       "[/Heydesk document context]",
       "",
       userText,
@@ -1761,10 +1889,6 @@ function buildCodexInput(
   return [
     "[Heydesk page context]",
     `The user currently has the page ${JSON.stringify(basename(context.path))} open in the Heydesk page editor.`,
-    `Its exact internal file reference is ${JSON.stringify(context.path)}. Start with that file when its content is needed; do not search unrelated workspace files unless the request requires broader context.`,
-    `The page revision before this turn is ${context.expectedRevision}.`,
-    "Focus changes on this page. Explain conversational answers normally.",
-    `In the response, call it ${JSON.stringify(basename(context.path))} or "this page" rather than repeating its internal path.`,
     "[/Heydesk page context]",
     "",
     userText,
@@ -1810,27 +1934,35 @@ function declineApprovalRequest(responder: CodexServerRequestResponder): void {
 
 function buildDocumentDeveloperInstructions(path: string): string {
   return [
-    `You are editing ${path} inside Heydesk.`,
+    `This thread belongs exclusively to the Word document ${JSON.stringify(basename(path))} already open in Heydesk.`,
     "In Heydesk, document always means a Microsoft Word .docx file; page, draft, or note refers to Markdown content in Pages.",
     "You are embedded beside the open Word document in a visual editor used by non-technical users. Keep responses concise, natural, and focused on what changed in the document.",
     "Do not expose dynamic tool names, paragraph identifiers, internal paths, or implementation details unless the user asks for technical information.",
     "Use only the document namespace tools. Never use shell commands, filesystem writes, or network access.",
+    "Only inspect or modify this document. Never create another file or inspect another workspace artifact. If broader workspace context is required, ask the user to continue from Home.",
     "If the current document is blank and the request asks to create content, populate this already-open document. Never create another file.",
     "Inspect the relevant text and pending changes before mutating the document, and use the stable paraId returned by the read tools.",
     "Use append_paragraphs once when creating new document structure or adding several paragraphs. It can apply Word paragraph styles and run-level formatting while it creates the content. Do not simulate paragraphs with repeated insertions into one paraId.",
-    "Use suggest_change for reviewable replacements and deletions inside existing paragraphs. Each suggestion must target exactly one paragraph: search must identify existing text, and search and replaceWith must never contain line breaks. Avoid ranges that overlap an unresolved tracked change.",
-    "Use apply_formatting for character styling such as bold, italic, underline, color, highlight, font size, or font family. Use set_paragraph_style for Title, Subtitle, Heading1 through Heading6, Quote, Normal, and other styles already defined in the document.",
+    "Use suggest_change for reviewable copy changes. Each suggestion targets exactly one paragraph: search must identify existing text, and search and replaceWith must never contain line breaks. Avoid ranges that overlap an unresolved tracked change.",
+    "Use apply_formatting for one character-styling operation and apply_formatting_batch when the same request affects several paragraphs. Use set_paragraph_style for one style change and set_paragraph_styles when several paragraphs need styles.",
     "Express document hierarchy with paragraph styles, not bold text or font size alone. For a structured document, use Title for its title, Subtitle for an optional deck or byline, Heading1 for top-level sections, Heading2 and Heading3 for nested sections, Normal for body paragraphs, and Quote for block quotations.",
     "Formatting and paragraph-style tools apply direct edits rather than tracked changes. Use them only when the user explicitly asks for formatting or when formatting is essential to the requested result.",
     "Never accept or reject tracked changes on the user's behalf.",
+    `Refer to the target as ${JSON.stringify(basename(path))} or "this document". After an edit, briefly describe the result without reporting a path or saved-file artifact.`,
   ].join(" ");
 }
 
 function buildPageDeveloperInstructions(path: string): string {
   return [
-    buildWorkspaceDeveloperInstructions(),
-    `This conversation belongs only to the open page ${path}. Do not assume context from Home or any other page or document conversation.`,
-    "When the user refers to this page, inspect or update that exact page rather than searching for a different artifact.",
+    `This thread belongs exclusively to the open Markdown page ${JSON.stringify(basename(path))}. Its workspace-relative path is ${JSON.stringify(path)}.`,
+    "You are embedded beside this page in a visual editor used by non-technical users. Keep responses concise, natural, and focused on the visible result.",
+    "Read and edit the open page directly on the local filesystem. Only modify this exact page. Never create, rename, move, delete, or modify another file, page, or document.",
+    "Start with the open page as the primary context. You may read other workspace files only when the user explicitly requests workspace-aware work or the request clearly depends on named workspace context. Do not broadly explore the workspace for edits, rewrites, formatting, or questions answerable from the open page.",
+    "Reading additional context never grants permission to modify another file. If another mutation is required, ask the user to continue from Home.",
+    "Keep the page compatible with Heydesk's Markdown editor. Use ATX headings, paragraphs, bold, italic, strikethrough, inline or fenced code, blockquotes, ordered or unordered lists, links, horizontal rules, and ==highlight== syntax.",
+    "Do not add YAML frontmatter, raw HTML, MDX or JSX, task lists, Markdown tables, footnotes, reference-style links, or embedded images unless the user explicitly requests source-only content.",
+    "Do not create scripts, helper files, build artifacts, or temporary files. Never use network access.",
+    `Refer to the target as ${JSON.stringify(basename(path))} or "this page". After an edit, briefly describe the result without reporting its internal path or presenting it as a newly created artifact.`,
   ].join(" ");
 }
 
@@ -1860,7 +1992,11 @@ function documentDynamicTools() {
           description: schema.function.description,
           inputSchema: schema.function.parameters,
         }))
-        .concat(appendParagraphsDynamicTool),
+        .concat(
+          appendParagraphsDynamicTool,
+          applyFormattingBatchDynamicTool,
+          setParagraphStylesDynamicTool,
+        ),
     },
   ];
 }
@@ -1919,8 +2055,12 @@ export function validateDocumentToolArguments(
       ? suggestChangeArgumentsSchema
       : tool === "apply_formatting"
         ? applyFormattingArgumentsSchema
+        : tool === "apply_formatting_batch"
+          ? applyFormattingBatchArgumentsSchema
         : tool === "set_paragraph_style"
           ? setParagraphStyleArgumentsSchema
+          : tool === "set_paragraph_styles"
+            ? setParagraphStylesArgumentsSchema
           : tool === "append_paragraphs"
             ? appendParagraphsArgumentsSchema
             : undefined;

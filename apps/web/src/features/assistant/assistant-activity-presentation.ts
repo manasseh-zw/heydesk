@@ -17,6 +17,7 @@ export function presentAssistantActivity(
     add_comment: "Add comment",
     append_paragraphs: "Add content",
     apply_formatting: "Format text",
+    apply_formatting_batch: "Format text",
     file_change: "Update file",
     fileChange: "Update file",
     find_text: "Find text",
@@ -26,6 +27,7 @@ export function presentAssistantActivity(
     read_pages: "Read pages",
     read_selection: "Read selection",
     set_paragraph_style: "Apply style",
+    set_paragraph_styles: "Apply styles",
     suggest_change: "Suggest change",
   };
 

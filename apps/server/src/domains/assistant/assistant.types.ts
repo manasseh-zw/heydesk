@@ -108,6 +108,12 @@ export type AssistantArtifact = {
   kind: "page" | "document";
 };
 
+export type AssistantContentCommit = {
+  path: string;
+  kind: "page" | "document";
+  revision: string;
+};
+
 export type AssistantDocumentToolCall = {
   callId: string;
   runId: string;
@@ -149,6 +155,7 @@ export type AssistantEvent =
   | { type: "document-tool.requested"; call: AssistantDocumentToolCall }
   | { type: "document-tool.resolved"; callId: string }
   | { type: "document.created"; handoff: AssistantDocumentHandoff }
+  | { type: "content.committed"; content: AssistantContentCommit }
   | { type: "artifact.committed"; artifact: AssistantArtifact }
   | { type: "run.completed"; run: AssistantRun }
   | { type: "run.failed"; runId: string; error: AssistantError };

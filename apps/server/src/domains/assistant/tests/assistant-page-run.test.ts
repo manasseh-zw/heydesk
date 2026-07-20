@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { CodexAppServer } from "../../../infrastructure/codex/codex-app-server";
+import type { CodexServerRequestResponder } from "../../../infrastructure/codex/codex.types";
 import { PageService } from "../../page/page.service";
 import { AssistantConflictError, AssistantService } from "../assistant.service";
 
@@ -80,8 +81,8 @@ describe("page-scoped assistant runs", () => {
     expect(input).toContain(
       'The user currently has the page "Notes.md" open in the Heydesk page editor.',
     );
-    expect(input).toContain('exact internal file reference is "pages/Notes.md"');
-    expect(input).toContain(page.revision);
+    expect(input).not.toContain("pages/Notes.md");
+    expect(input).not.toContain(page.revision);
     expect(input).toContain("Make the opening clearer.");
     const thread = codex.requests.find(
       (request) => request.method === "thread/start",
@@ -89,23 +90,52 @@ describe("page-scoped assistant runs", () => {
     expect(
       (thread?.params as { developerInstructions: string })
         .developerInstructions,
-    ).toContain("keep all responses concise, natural");
+    ).toContain("Keep responses concise, natural");
     expect(
       (thread?.params as { developerInstructions: string })
         .developerInstructions,
-    ).toContain("A document always means a Microsoft Word .docx file");
+    ).toContain('workspace-relative path is "pages/Notes.md"');
     expect(
       (thread?.params as { developerInstructions: string })
         .developerInstructions,
-    ).toContain("A page, draft, or note means a Markdown .md file");
+    ).toContain("Only modify this exact page");
     expect(
       (thread?.params as { developerInstructions: string })
         .developerInstructions,
-    ).toContain("Do not put YAML frontmatter, raw HTML, MDX or JSX");
+    ).toContain("Do not add YAML frontmatter, raw HTML, MDX or JSX");
     expect(
       (thread?.params as { developerInstructions: string })
         .developerInstructions,
-    ).toContain("This conversation belongs only to the open page pages/Notes.md");
+    ).toContain("You may read other workspace files only when the user explicitly requests workspace-aware work");
+
+    codex.emit("notification", {
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        item: {
+          id: "file-change-1",
+          type: "fileChange",
+          changes: [{ path: "pages/Other.md", kind: "update" }],
+        },
+      },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    let resolution: unknown;
+    codex.emit("request", {
+      request: {
+        id: 1,
+        method: "item/fileChange/requestApproval",
+        params: { threadId: "thread-1", itemId: "file-change-1" },
+      },
+      resolve(value) {
+        resolution = value;
+      },
+      reject() {
+        throw new Error("The out-of-scope page change should be declined.");
+      },
+    } satisfies CodexServerRequestResponder);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(resolution).toEqual({ decision: "decline" });
 
     await expect(
       service.startRun("workspace-1", "run-stale", "Edit it.", {

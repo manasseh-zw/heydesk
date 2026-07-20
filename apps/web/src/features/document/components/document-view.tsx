@@ -74,7 +74,9 @@ const mutatingDocumentTools = new Set([
   "add_comment",
   "suggest_change",
   "apply_formatting",
+  "apply_formatting_batch",
   "set_paragraph_style",
+  "set_paragraph_styles",
   "append_paragraphs",
 ]);
 
@@ -89,8 +91,8 @@ type AppendParagraph = {
 };
 
 type DocumentToolResult =
-  | { success: true; data: unknown; buffer?: ArrayBuffer }
-  | { success: false; error: string };
+  | { success: true; data: unknown; buffer?: ArrayBuffer; mutated?: boolean }
+  | { success: false; error: string; buffer?: never; mutated?: boolean };
 
 type SaveStatus = "saved" | "unsaved" | "saving" | "conflict" | "error";
 
@@ -137,6 +139,20 @@ export function DocumentView({
       tool: string,
       argumentsValue: Record<string, unknown>,
     ): Promise<DocumentToolResult> => {
+      if (tool === "apply_formatting_batch") {
+        return executeDocumentBatch(
+          "apply_formatting",
+          parseDocumentBatchOperations(argumentsValue),
+          executeToolCall,
+        );
+      }
+      if (tool === "set_paragraph_styles") {
+        return executeDocumentBatch(
+          "set_paragraph_style",
+          parseDocumentBatchOperations(argumentsValue),
+          executeToolCall,
+        );
+      }
       if (tool !== "append_paragraphs") {
         const result = executeToolCall(tool, argumentsValue);
         return result.success
@@ -369,7 +385,10 @@ export function DocumentView({
           await claimDocumentTool(workspace.id, call.callId);
           const result = await executeDocumentTool(call.tool, call.arguments);
           let revision: string | undefined;
-          if (result.success && mutatingDocumentTools.has(call.tool)) {
+          if (
+            mutatingDocumentTools.has(call.tool) &&
+            (result.success || result.mutated)
+          ) {
             if (result.buffer) {
               const current = loadedRef.current;
               if (!current) throw new Error("The document editor is not ready.");
@@ -514,6 +533,52 @@ export function DocumentView({
       />
     </div>
   );
+}
+
+function parseDocumentBatchOperations(
+  value: Record<string, unknown>,
+): Record<string, unknown>[] {
+  if (!Array.isArray(value.operations)) {
+    throw new Error("Document batch operations are missing.");
+  }
+  return value.operations.map((operation) => {
+    if (!operation || typeof operation !== "object" || Array.isArray(operation)) {
+      throw new Error("A document batch operation is invalid.");
+    }
+    return operation as Record<string, unknown>;
+  });
+}
+
+function executeDocumentBatch(
+  tool: "apply_formatting" | "set_paragraph_style",
+  operations: Record<string, unknown>[],
+  executeToolCall: (
+    tool: string,
+    argumentsValue: Record<string, unknown>,
+  ) => { success: boolean; data?: unknown; error?: string },
+): DocumentToolResult {
+  let completed = 0;
+  for (const operation of operations) {
+    const result = executeToolCall(tool, operation);
+    if (!result.success) {
+      return {
+        success: false,
+        error:
+          result.error ??
+          `Document batch stopped after ${completed} successful operations.`,
+        mutated: completed > 0,
+      };
+    }
+    completed += 1;
+  }
+  return {
+    success: true,
+    data: {
+      operationsApplied: completed,
+      message: `Applied ${completed} document operations in one save.`,
+    },
+    mutated: completed > 0,
+  };
 }
 
 function parseAppendParagraphs(

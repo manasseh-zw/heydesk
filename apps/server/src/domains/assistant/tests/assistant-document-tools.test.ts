@@ -80,6 +80,38 @@ describe("document tool argument validation", () => {
         styleId: "Heading1",
       }),
     ).toMatchObject({ success: true });
+    expect(
+      validateDocumentToolArguments("apply_formatting_batch", {
+        operations: [
+          { paraId: "A1B2C3", marks: { bold: false } },
+          { paraId: "D4E5F6", marks: { italic: true } },
+        ],
+      }),
+    ).toMatchObject({ success: true });
+    expect(
+      validateDocumentToolArguments("set_paragraph_styles", {
+        operations: [
+          { paraId: "A1B2C3", styleId: "Heading1" },
+          { paraId: "D4E5F6", styleId: "Normal" },
+        ],
+      }),
+    ).toMatchObject({ success: true });
+  });
+
+  it("bounds batch formatting operations", () => {
+    expect(
+      validateDocumentToolArguments("apply_formatting_batch", {
+        operations: [],
+      }),
+    ).toMatchObject({ success: false });
+    expect(
+      validateDocumentToolArguments("set_paragraph_styles", {
+        operations: Array.from({ length: 101 }, (_, index) => ({
+          paraId: String(index),
+          styleId: "Normal",
+        })),
+      }),
+    ).toMatchObject({ success: false });
   });
 
   it("rejects malformed formatting values before they reach the editor", () => {

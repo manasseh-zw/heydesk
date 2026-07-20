@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { CodexAppServer } from "../../../infrastructure/codex/codex-app-server";
+import type { CodexServerRequestResponder } from "../../../infrastructure/codex/codex.types";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DocumentService } from "../../document/document.service";
@@ -70,7 +71,7 @@ describe("document-scoped assistant runs", () => {
     expect(
       (thread?.params as { developerInstructions: string })
         .developerInstructions,
-    ).toContain("Each suggestion must target exactly one paragraph");
+    ).toContain("Each suggestion targets exactly one paragraph");
     expect(
       (thread?.params as { developerInstructions: string })
         .developerInstructions,
@@ -100,6 +101,8 @@ describe("document-scoped assistant runs", () => {
       "set_paragraph_style",
       "scroll",
       "append_paragraphs",
+      "apply_formatting_batch",
+      "set_paragraph_styles",
     ]);
     const turn = codex.requests.find(({ method }) => method === "turn/start");
     expect(turn?.params).toMatchObject({
@@ -113,9 +116,36 @@ describe("document-scoped assistant runs", () => {
     expect(input).toContain(
       'The user currently has the Word document "Proposal.docx" open in the Heydesk document editor.',
     );
-    expect(input).toContain(
-      'exact internal file reference is "documents/Proposal.docx"',
-    );
+    expect(input).not.toContain("documents/Proposal.docx");
+
+    let toolResolution: unknown;
+    codex.emit("request", {
+      request: {
+        id: 1,
+        method: "item/tool/call",
+        params: {
+          threadId: "thread-document",
+          namespace: "document",
+          tool: "apply_formatting",
+          callId: "format-1",
+          arguments: { paraId: "A1B2C3", marks: { bold: false } },
+        },
+      },
+      resolve(value) {
+        toolResolution = value;
+      },
+      reject() {
+        throw new Error("The valid document tool should be resolved.");
+      },
+    } satisfies CodexServerRequestResponder);
+    await new Promise((resolve) => setImmediate(resolve));
+    await service.claimDocumentTool("workspace-1", "format-1");
+    await service.respondToDocumentTool("workspace-1", "format-1", {
+      success: true,
+      data: { formatted: true },
+      revision: document.revision,
+    });
+    expect(toolResolution).toMatchObject({ success: true });
     await expect(
       service.getSnapshot("workspace-1", {
         kind: "document",
@@ -124,7 +154,21 @@ describe("document-scoped assistant runs", () => {
     ).resolves.toMatchObject({
       scope: { kind: "document", path: document.path },
       activeRun: { id: "run-document" },
+      events: expect.arrayContaining([
+        expect.objectContaining({
+          event: expect.objectContaining({ type: "content.committed" }),
+        }),
+      ]),
     });
+    const documentSnapshot = await service.getSnapshot("workspace-1", {
+      kind: "document",
+      path: document.path,
+    });
+    expect(
+      documentSnapshot.events.some(
+        ({ event }) => event.type === "artifact.committed",
+      ),
+    ).toBe(false);
     await expect(service.getSnapshot("workspace-1")).resolves.toMatchObject({
       scope: { kind: "workspace" },
       activeRun: null,

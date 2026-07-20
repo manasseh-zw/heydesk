@@ -42,6 +42,7 @@ const emptyState: AssistantClientState = {
 };
 
 type AssistantSessionValue = {
+  scope: AssistantScope;
   messages: ReturnType<typeof useChat>["messages"];
   state: AssistantClientState;
   readiness?: AssistantReadiness;
@@ -150,6 +151,27 @@ export function AssistantSessionProvider({
           queryKey: documentKeys.all(workspace.id),
         });
       }
+      if (name === "heydesk:content-committed") {
+        const content = asRecord(value);
+        const path = recordString(content, "path");
+        const kind = recordString(content, "kind");
+        if (path && kind === "page") {
+          void queryClient.invalidateQueries({
+            queryKey: pageKeys.detail(workspace.id, path),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: pageKeys.all(workspace.id),
+          });
+        }
+        if (path && kind === "document") {
+          void queryClient.invalidateQueries({
+            queryKey: documentKeys.detail(workspace.id, path),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: documentKeys.all(workspace.id),
+          });
+        }
+      }
     },
   });
   latestMessageIdRef.current = chat.messages.at(-1)?.id;
@@ -175,6 +197,7 @@ export function AssistantSessionProvider({
         !latestMessage.parts.some(isVisibleAssistantPart)));
 
   const value: AssistantSessionValue = {
+    scope,
     messages: chat.messages,
     state,
     readiness: readinessQuery.data,

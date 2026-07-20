@@ -150,7 +150,11 @@ export function AssistantHome({
                   </MessageContent>
                 </Message>
                 {state.artifacts
-                  .filter((artifact) => artifact.afterMessageId === message.id)
+                  .filter(
+                    (artifact) =>
+                      artifact.afterMessageId === message.id &&
+                      shouldPresentArtifact(session.scope, artifact),
+                  )
                   .map((artifact) => (
                     <CommittedArtifactPreview
                       kind={artifact.kind}
@@ -203,10 +207,11 @@ export function AssistantHome({
             {state.artifacts
               .filter(
                 (artifact) =>
-                  !artifact.afterMessageId ||
-                  !session.messages.some(
-                    (message) => message.id === artifact.afterMessageId,
-                  ),
+                  shouldPresentArtifact(session.scope, artifact) &&
+                  (!artifact.afterMessageId ||
+                    !session.messages.some(
+                      (message) => message.id === artifact.afterMessageId,
+                    )),
               )
               .map((artifact) => (
                 <CommittedArtifactPreview
@@ -249,6 +254,16 @@ export function AssistantHome({
         </div>
       </div>
     </div>
+  );
+}
+
+function shouldPresentArtifact(
+  scope: import("../assistant.types").AssistantScope,
+  artifact: import("../assistant.types").AssistantArtifact,
+): boolean {
+  return !(
+    (scope.kind === "page" || scope.kind === "document") &&
+    scope.path === artifact.path
   );
 }
 

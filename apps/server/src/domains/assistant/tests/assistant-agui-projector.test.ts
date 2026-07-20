@@ -67,6 +67,25 @@ describe("assistant AG-UI projector", () => {
     ]);
   });
 
+  it("projects scoped content commits separately from artifacts", () => {
+    expect(
+      projectAssistantEvent({
+        type: "content.committed",
+        content: {
+          path: "documents/Proposal.docx",
+          kind: "document",
+          revision: "a".repeat(64),
+        },
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        type: "CUSTOM",
+        name: "heydesk:content-committed",
+        value: expect.objectContaining({ kind: "document" }),
+      }),
+    ]);
+  });
+
   it("projects tool calls without losing their Heydesk kind", () => {
     const events = projectAssistantEvent({
       type: "activity.started",
