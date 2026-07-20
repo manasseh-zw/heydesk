@@ -15,6 +15,11 @@ export type ComposerSubmission = {
   commandId?: ComposerCommandId;
 };
 
+const commandsRequiringInput = new Set<ComposerCommandId>([
+  "create-page",
+  "create-document",
+]);
+
 const commandInstructions: Partial<Record<ComposerCommandId, string>> = {
   "create-page": "Create a page for this request.",
   "create-document": "Create a Word document for this request.",
@@ -36,5 +41,10 @@ export function messageForComposerSubmission(
   const instruction = submission?.commandId
     ? commandInstructions[submission.commandId]
     : undefined;
-  return instruction ? `${instruction}\n\n${message}` : message;
+  if (!instruction) return message;
+  return message.trim() ? `${instruction}\n\n${message}` : instruction;
+}
+
+export function composerCommandRequiresInput(commandId: ComposerCommandId) {
+  return commandsRequiringInput.has(commandId);
 }

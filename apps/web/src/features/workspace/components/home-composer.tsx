@@ -10,6 +10,7 @@ import {
   SparklesIcon,
   SquareIcon,
   TextQuoteIcon,
+  XIcon,
 } from "lucide-react";
 
 import { Button } from "@heydesk/ui/components/button";
@@ -40,9 +41,10 @@ import type {
   AssistantModel,
   AssistantRunPreferences,
 } from "@/features/assistant/assistant.types";
-import type {
-  ComposerCommandId,
-  ComposerSubmission,
+import {
+  composerCommandRequiresInput,
+  type ComposerCommandId,
+  type ComposerSubmission,
 } from "../workspace-assistant-routing";
 import { useState } from "react";
 
@@ -161,18 +163,22 @@ export function HomeComposer({
   const selectedModelLabel = codexModels.find(
     (model) => model.id === selectedModelId,
   )!.label;
+  const preferences = selectedModel
+    ? {
+        model: selectedModel.model,
+        effort: selectedModel.defaultReasoningEffort,
+      }
+    : undefined;
+  const selectedCommand = commandsByContext[context].find(
+    (command) => command.id === selectedCommandId,
+  );
 
   const submit = (next: ComposerValue) => {
     const text = next.text.trim();
-    if (!text || !onSubmit) return;
+    if (!onSubmit || (!text && !selectedCommandId)) return;
     void onSubmit(
       text,
-      selectedModel
-        ? {
-            model: selectedModel.model,
-            effort: selectedModel.defaultReasoningEffort,
-          }
-        : undefined,
+      preferences,
       selectedCommandId ? { commandId: selectedCommandId } : undefined,
     );
     setSelectedCommandId(undefined);
@@ -205,18 +211,45 @@ export function HomeComposer({
         className={`${compact ? "rounded-2xl" : "mt-6 rounded-3xl"} w-full border border-border/60 shadow-[0_8px_24px_-16px_rgba(15,23,42,0.18)] focus-within:border-primary/25 focus-within:ring-1 focus-within:ring-primary/20 dark:border-border/70 dark:shadow-[0_8px_24px_-16px_rgba(0,0,0,0.45)]`}
         disabled={disabled}
       >
+        {selectedCommand && (
+          <div className="px-3 pt-3">
+            <button
+              aria-label={`Remove ${selectedCommand.label} action`}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-primary/20 bg-primary/10 px-2 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary [&>svg]:size-3.5"
+              onClick={() => setSelectedCommandId(undefined)}
+              type="button"
+            >
+              {selectedCommand.icon}
+              <span>{selectedCommand.label}</span>
+              <XIcon className="size-3" />
+            </button>
+          </div>
+        )}
         <ComposerRichInput
           autoFocus={!compact}
           className={`${compact ? "[&_[data-slot=composer-rich-input]]:max-h-40" : "[&_[data-slot=composer-rich-input]]:max-h-52"} [&_[data-slot=composer-rich-input]]:min-h-20 [&_[data-slot=composer-rich-input]]:px-4 [&_[data-slot=composer-rich-input]]:py-4 [&_[data-slot=composer-rich-input-skeleton]]:min-h-20 [&_[data-slot=composer-rich-input-skeleton]]:px-4 [&_[data-slot=composer-rich-input-skeleton]]:py-4`}
           onSubmit={submit}
           onValueChange={setValue}
-          placeholder="Ask Heydesk anything. Type / for actions."
+          placeholder={
+            selectedCommandId === "create-page"
+              ? "What should the page contain?"
+              : selectedCommandId === "create-document"
+                ? "What should the document contain?"
+                : "Ask Heydesk anything. Type / for actions."
+          }
           triggers={{
             "/": {
               items: commandsByContext[context],
               onSelect(item, selection) {
-                setSelectedCommandId(item.id as ComposerCommandId);
                 selection.clearTrigger();
+                const commandId = item.id as ComposerCommandId;
+                if (composerCommandRequiresInput(commandId)) {
+                  setSelectedCommandId(commandId);
+                  return;
+                }
+                setSelectedCommandId(undefined);
+                setValue(emptyValue);
+                void onSubmit?.("", preferences, { commandId });
               },
             },
           }}

@@ -9,6 +9,7 @@ import {
 
 import type { WorkspaceSummary } from "@/features/workspace/workspace.types";
 import type { ComposerContext } from "@/features/workspace/components/home-composer";
+import type { ComposerSubmission } from "@/features/workspace/workspace-assistant-routing";
 import type { AssistantRunPreferences } from "../assistant.types";
 import { AssistantHome } from "./assistant-home";
 
@@ -24,6 +25,7 @@ type AssistantRailProps = {
   onSend: (
     message: string,
     preferences?: AssistantRunPreferences,
+    submission?: ComposerSubmission,
   ) => Promise<void>;
   onWidthChange: (width: number) => void;
   open: boolean;

@@ -48,6 +48,10 @@ import { useAssistantSession } from "@/features/assistant/assistant-session";
 import type { AssistantRunPreferences } from "@/features/assistant/assistant.types";
 import { documentKeys } from "@/features/document/document.queries";
 import type { WorkspaceSummary } from "@/features/workspace/workspace.types";
+import {
+  messageForComposerSubmission,
+  type ComposerSubmission,
+} from "@/features/workspace/workspace-assistant-routing";
 import { pageKeys, pageQueryOptions } from "../page.queries";
 import {
   convertPageToDocument,
@@ -513,9 +517,10 @@ function LoadedPageView({
   const sendPageMessage = async (
     message: string,
     preferences?: AssistantRunPreferences,
+    submission?: ComposerSubmission,
   ) => {
     const saved = await saveNow();
-    await session.sendMessage(message, {
+    await session.sendMessage(messageForComposerSubmission(message, submission), {
       context: {
         kind: "page",
         path: page.path,

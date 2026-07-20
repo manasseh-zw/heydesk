@@ -28,7 +28,10 @@ import {
   type ComposerContext,
 } from "@/features/workspace/components/home-composer";
 import type { WorkspaceSummary } from "@/features/workspace/workspace.types";
-import type { ComposerSubmission } from "@/features/workspace/workspace-assistant-routing";
+import {
+  messageForComposerSubmission,
+  type ComposerSubmission,
+} from "@/features/workspace/workspace-assistant-routing";
 import type { AssistantRunPreferences } from "../assistant.types";
 import {
   getAssistantReadiness,
@@ -69,8 +72,14 @@ export function AssistantHome({
   const waitingForFirstAssistantPart = session.waitingForFirstAssistantPart;
   const sendMessage =
     onSend ??
-    ((message: string, preferences?: AssistantRunPreferences) =>
-      session.sendMessage(message, { preferences }));
+    ((
+      message: string,
+      preferences?: AssistantRunPreferences,
+      submission?: ComposerSubmission,
+    ) =>
+      session.sendMessage(messageForComposerSubmission(message, submission), {
+        preferences,
+      }));
 
   if (!hasMessages) {
     if (compactSurface && composerContext !== "workspace") {

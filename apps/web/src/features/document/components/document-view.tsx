@@ -35,6 +35,10 @@ import {
   respondToDocumentTool,
 } from "@/features/assistant/assistant.service";
 import type { WorkspaceSummary } from "@/features/workspace/workspace.types";
+import {
+  messageForComposerSubmission,
+  type ComposerSubmission,
+} from "@/features/workspace/workspace-assistant-routing";
 import { documentKeys, documentQueryOptions } from "../document.queries";
 import {
   getDocument,
@@ -431,11 +435,12 @@ export function DocumentView({
   const sendDocumentMessage = async (
     message: string,
     preferences?: AssistantRunPreferences,
+    submission?: ComposerSubmission,
   ) => {
     await flush();
     const current = loadedRef.current;
     if (!current) return;
-    await session.sendMessage(message, {
+    await session.sendMessage(messageForComposerSubmission(message, submission), {
       context: {
         kind: "document",
         path,

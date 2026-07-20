@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { messageForComposerSubmission } from "../workspace-assistant-routing";
+import {
+  composerCommandRequiresInput,
+  messageForComposerSubmission,
+} from "../workspace-assistant-routing";
 
 describe("workspace assistant composer intent", () => {
   it("makes a selected document action explicit without creating it locally", () => {
@@ -21,5 +24,18 @@ describe("workspace assistant composer intent", () => {
     ).toBe(
       "Create a Word document with an essay outline about microplastics.",
     );
+  });
+
+  it("supports command-only actions without adding empty spacing", () => {
+    expect(
+      messageForComposerSubmission("", { commandId: "summarize-workspace" }),
+    ).toBe("Summarize this workspace.");
+  });
+
+  it("only waits for user context when creating a new artifact", () => {
+    expect(composerCommandRequiresInput("create-page")).toBe(true);
+    expect(composerCommandRequiresInput("create-document")).toBe(true);
+    expect(composerCommandRequiresInput("summarize-page")).toBe(false);
+    expect(composerCommandRequiresInput("improve-document")).toBe(false);
   });
 });
