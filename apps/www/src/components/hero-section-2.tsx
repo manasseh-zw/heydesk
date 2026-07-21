@@ -8,14 +8,60 @@ import { GitHubButton } from "@/components/github-button";
 import { LogoMark } from "@/components/logo";
 
 const githubUrl = "https://github.com/manasseh-zw/heydesk";
-const macDownloadUrl =
-  "https://github.com/manasseh-zw/heydesk/releases/download/v0.0.1-preview/Heydesk-0.0.1-arm64.dmg";
+const releasesUrl = `${githubUrl}/releases`;
+
+function findLatestDmgUrl(value: unknown) {
+  if (!Array.isArray(value)) return null;
+
+  for (const release of value) {
+    if (typeof release !== "object" || release === null) continue;
+    if (!("draft" in release) || release.draft !== false) continue;
+    if (!("assets" in release) || !Array.isArray(release.assets)) continue;
+
+    for (const asset of release.assets) {
+      if (typeof asset !== "object" || asset === null) continue;
+      if (!("name" in asset) || typeof asset.name !== "string") continue;
+      if (
+        !("browser_download_url" in asset) ||
+        typeof asset.browser_download_url !== "string"
+      ) {
+        continue;
+      }
+
+      if (asset.name.endsWith(".dmg")) return asset.browser_download_url;
+    }
+  }
+
+  return null;
+}
 
 export function HeroSection2() {
   const [isVisible, setIsVisible] = useState(false);
+  const [macDownloadUrl, setMacDownloadUrl] = useState(releasesUrl);
 
   useEffect(() => {
+    const controller = new AbortController();
+
     setIsVisible(true);
+
+    void fetch(
+      "https://api.github.com/repos/manasseh-zw/heydesk/releases?per_page=20",
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+        signal: controller.signal,
+      },
+    )
+      .then((response) => (response.ok ? response.json() : null))
+      .then((releases: unknown) => {
+        const latestDmgUrl = findLatestDmgUrl(releases);
+        if (latestDmgUrl) setMacDownloadUrl(latestDmgUrl);
+      })
+      .catch(() => undefined);
+
+    return () => controller.abort();
   }, []);
 
   const transitionVariants: { item: Variants; container: Variants } = {
