@@ -15,6 +15,7 @@
     "test:assistant-e2e": "pnpm --filter server run test:assistant-e2e",
     "dev:desktop": "pnpm --filter @heydesk/desktop dev",
     "build:desktop": "pnpm --filter server build && pnpm --filter @heydesk/desktop build",
+    "dev:www": "turbo run dev -F www",
     "desktop:package:dir": "pnpm --filter server build && pnpm --filter @heydesk/desktop package:dir",
     "desktop:package:mac": "pnpm --filter server build && pnpm --filter @heydesk/desktop package:mac",
     "desktop:package:mac:unsigned": "pnpm --filter server build && pnpm --filter @heydesk/desktop package:mac:unsigned",

@@ -9,6 +9,7 @@
 <p align="center">Heydesk brings Codex directly into first-class Markdown and Word editors, creating a continuous path from workspace context to polished, editable documents.</p>
 
 <p align="center">
+  <a href="https://heydesk.dev-manasseh.chatgpt.site"><img src="https://img.shields.io/badge/Website-Heydesk-84cc16?style=for-the-badge" alt="Heydesk website" /></a>
   <a href="https://github.com/manasseh-zw/heydesk/releases/download/v0.0.1-preview/Heydesk-0.0.1-arm64.dmg"><img src="https://img.shields.io/badge/Download-Heydesk%20DMG-88cc00?style=for-the-badge&logo=apple&logoColor=white" alt="Download Heydesk" /></a>
   <a href="https://github.com/manasseh-zw/heydesk"><img src="https://img.shields.io/badge/GitHub-Repository-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Repository" /></a>
   <a href="https://openai.com/codex/"><img src="https://img.shields.io/badge/Built%20with-Codex-111111?style=for-the-badge" alt="Built with Codex" /></a>
@@ -344,6 +345,7 @@ Heydesk is an original product and implementation, but it stands on the shoulder
 
 - **Desktop:** Electron 43
 - **Frontend:** React, Vite, TanStack Router, TanStack Query
+- **Marketing site:** React, Vite, Tailwind CSS, ChatGPT Sites
 - **UI:** Tailwind CSS, shared shadcn/ui primitives, Lucide
 - **Local server:** Node.js and Hono
 - **AI runtime:** Codex app server with GPT-5.6
@@ -361,7 +363,8 @@ heydesk/
 ├── apps/
 │   ├── web/         # React renderer and user-facing features
 │   ├── server/      # Hono API, Codex boundary, filesystem, and persistence
-│   └── desktop/     # Electron lifecycle and packaging shell
+│   ├── desktop/     # Electron lifecycle and packaging shell
+│   └── www/         # Standalone marketing site and download page
 ├── packages/
 │   ├── ui/          # Shared shadcn/ui components and design tokens
 │   ├── db/          # SQLite schema and database helpers
@@ -474,12 +477,14 @@ Every push to `main` runs the desktop validation and packaging pipeline. Success
 
 The current preview release is available here:
 
+- [Visit the Heydesk website](https://heydesk.dev-manasseh.chatgpt.site)
 - [Heydesk v0.0.1-preview](https://github.com/manasseh-zw/heydesk/releases/tag/v0.0.1-preview)
 - [Download the Apple Silicon DMG](https://github.com/manasseh-zw/heydesk/releases/download/v0.0.1-preview/Heydesk-0.0.1-arm64.dmg)
 - [Download the Apple Silicon ZIP](https://github.com/manasseh-zw/heydesk/releases/download/v0.0.1-preview/Heydesk-0.0.1-mac-arm64.zip)
 
 ## Links
 
+- Website: https://heydesk.dev-manasseh.chatgpt.site
 - Demo video: https://youtu.be/9f_ZhibG16w
 - Repository: https://github.com/manasseh-zw/heydesk
 - Codex feedback session: `019f7140-d5fe-7e32-8785-2e04227a5e44`
