@@ -123,6 +123,21 @@ describe("PageService", () => {
     });
   });
 
+  it("deletes only a validated page inside the workspace", async () => {
+    const root = await createWorkspace();
+    await writeFile(join(root, "pages", "Draft.md"), "# Draft");
+    const service = createService(root);
+
+    await service.delete("workspace-1", "pages/Draft.md");
+
+    await expect(
+      service.read("workspace-1", "pages/Draft.md"),
+    ).rejects.toBeInstanceOf(PageNotFoundError);
+    await expect(
+      service.delete("workspace-1", "../Outside.md"),
+    ).rejects.toBeInstanceOf(InvalidPagePathError);
+  });
+
   it("marks Markdown as rich candidates and keeps MDX in source mode", async () => {
     const root = await createWorkspace();
     await writeFile(

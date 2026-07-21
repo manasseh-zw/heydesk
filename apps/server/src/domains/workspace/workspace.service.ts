@@ -123,6 +123,18 @@ export class WorkspaceService {
     return workspace;
   }
 
+  async remove(id: string): Promise<void> {
+    const workspace = (await this.repository.listRecent()).find(
+      (item) => item.id === id,
+    );
+    if (!workspace) {
+      throw new WorkspaceNotFoundError(
+        "That workspace is no longer in Heydesk.",
+      );
+    }
+    await this.repository.forget(id);
+  }
+
   private async remember(
     manifest: WorkspaceManifest,
     path: string,

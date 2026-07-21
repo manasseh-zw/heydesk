@@ -14,6 +14,7 @@ import { resolveParagraphStyleOptions } from "@eigenpal/docx-editor-core/utils/s
 
 import {
   DocumentAlreadyExistsError,
+  DocumentNotFoundError,
   DocumentRevisionConflictError,
   DocumentService,
   InvalidDocumentError,
@@ -192,6 +193,21 @@ describe("DocumentService", () => {
     await expect(service.list("workspace-1")).resolves.toMatchObject([
       { path: "documents/Visible.docx" },
     ]);
+  });
+
+  it("deletes only a validated document inside the workspace", async () => {
+    const root = await createWorkspace();
+    const service = createService(root);
+    const document = await service.create("workspace-1", "Temporary");
+
+    await service.delete("workspace-1", document.path);
+
+    await expect(
+      service.read("workspace-1", document.path),
+    ).rejects.toBeInstanceOf(DocumentNotFoundError);
+    await expect(
+      service.delete("workspace-1", "../Outside.docx"),
+    ).rejects.toBeInstanceOf(InvalidDocumentError);
   });
 });
 

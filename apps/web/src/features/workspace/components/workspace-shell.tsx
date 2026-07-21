@@ -39,10 +39,11 @@ import type {
 } from "@/features/assistant/assistant.types";
 import { PageView } from "@/features/page/components/page-view";
 import { pageKeys } from "@/features/page/page.queries";
-import { createPage } from "@/features/page/page.service";
+import { createPage, deletePage } from "@/features/page/page.service";
 import { documentKeys } from "@/features/document/document.queries";
 import {
   createDocument,
+  deleteDocument,
   importDocument,
 } from "@/features/document/document.service";
 import { preloadDocumentView } from "@/features/document/components/lazy-document-view";
@@ -121,6 +122,22 @@ export function WorkspaceShell({
     setActiveDocumentPath(null);
     setActivePagePath(page.path);
   };
+  const deleteWorkspacePage = async (path: string) => {
+    if (activePagePath === path) {
+      await flushContentRef.current?.();
+    }
+    await deletePage(workspace.id, path);
+    queryClient.removeQueries({
+      queryKey: pageKeys.detail(workspace.id, path),
+    });
+    await queryClient.invalidateQueries({
+      queryKey: pageKeys.all(workspace.id),
+    });
+    if (activePagePath === path) {
+      setActivePagePath(null);
+      setActiveDocumentPath(null);
+    }
+  };
   const createWordDocument = async (name: string) => {
     await flushContentRef.current?.();
     const document = await createDocument(workspace.id, name);
@@ -138,6 +155,22 @@ export function WorkspaceShell({
     });
     setActivePagePath(null);
     setActiveDocumentPath(document.path);
+  };
+  const deleteWorkspaceDocument = async (path: string) => {
+    if (activeDocumentPath === path) {
+      await flushContentRef.current?.();
+    }
+    await deleteDocument(workspace.id, path);
+    queryClient.removeQueries({
+      queryKey: documentKeys.detail(workspace.id, path),
+    });
+    await queryClient.invalidateQueries({
+      queryKey: documentKeys.all(workspace.id),
+    });
+    if (activeDocumentPath === path) {
+      setActivePagePath(null);
+      setActiveDocumentPath(null);
+    }
   };
   const closeWorkspace = () => void afterFlush(onCloseWorkspace);
   const currentPage = activePagePath
@@ -168,8 +201,10 @@ export function WorkspaceShell({
         activePagePath={activePagePath}
         activeDocumentPath={activeDocumentPath}
         onCreateDocument={createWordDocument}
+        onDeleteDocument={deleteWorkspaceDocument}
         onImportDocument={importWordDocument}
         onCreatePage={createWorkspacePage}
+        onDeletePage={deleteWorkspacePage}
         onOpenDocument={openDocument}
         onOpenPage={openPage}
         onOpenHome={openHome}

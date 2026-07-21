@@ -71,6 +71,13 @@ export class PageService {
     );
   }
 
+  async delete(workspaceId: string, requestedPath: string): Promise<void> {
+    const workspace = await this.workspaces.getById(workspaceId);
+    const root = await realpath(workspace.path);
+    const pagePath = await resolvePagePath(root, requestedPath);
+    await rm(pagePath);
+  }
+
   async write(
     workspaceId: string,
     requestedPath: string,

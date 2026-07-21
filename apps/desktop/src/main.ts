@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  nativeImage,
   nativeTheme,
   session,
   shell,
@@ -37,6 +38,21 @@ let isQuitting = false;
 app.setName("Heydesk");
 nativeTheme.themeSource = "light";
 
+function getAppIconPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, "icon.png")
+    : join(__dirname, "../../resources/icon.png");
+}
+
+function setupDockIcon(): void {
+  if (process.platform === "darwin" && app.dock) {
+    const iconPath = getAppIconPath();
+    if (existsSync(iconPath)) {
+      app.dock.setIcon(nativeImage.createFromPath(iconPath));
+    }
+  }
+}
+
 const singleInstanceLock = app.requestSingleInstanceLock();
 if (!singleInstanceLock) app.quit();
 
@@ -48,6 +64,7 @@ app.on("second-instance", () => {
 });
 
 app.whenReady().then(async () => {
+  setupDockIcon();
   denyUnexpectedPermissions();
   registerDesktopHandlers();
 
@@ -153,6 +170,7 @@ async function startServer(): Promise<ServerConnection> {
 }
 
 function createWindow(apiOrigin: string): BrowserWindow {
+  const iconPath = getAppIconPath();
   const window = new BrowserWindow({
     backgroundColor: process.platform === "darwin" ? "#00ffffff" : "#ffffff",
     height: 680,
@@ -161,6 +179,7 @@ function createWindow(apiOrigin: string): BrowserWindow {
     show: false,
     title: "Heydesk",
     width: 920,
+    ...(existsSync(iconPath) ? { icon: iconPath } : {}),
     ...(process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,

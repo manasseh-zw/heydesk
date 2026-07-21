@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 
+import { AssistantRepository } from "../assistant/assistant.repository";
 import { DocumentService } from "../document/document.service";
 import {
   WorkspaceNotFoundError,
@@ -138,6 +139,37 @@ pageRoutes.put("/:workspaceId/pages/content", async (c) => {
         409,
       );
     }
+    if (
+      error instanceof PageNotFoundError ||
+      error instanceof WorkspaceNotFoundError
+    ) {
+      return c.json({ error: error.message }, 404);
+    }
+    if (error instanceof InvalidPagePathError) {
+      return c.json({ error: error.message }, 400);
+    }
+    throw error;
+  }
+});
+
+pageRoutes.delete("/:workspaceId/pages/content", async (c) => {
+  const input = pagePathSchema.safeParse(c.req.query());
+  if (!input.success) {
+    return c.json(
+      { error: input.error.issues[0]?.message ?? "Invalid page." },
+      400,
+    );
+  }
+  try {
+    const workspaceId = c.req.param("workspaceId");
+    const workspace = await workspaceService.getById(workspaceId);
+    await pageService.delete(workspaceId, input.data.path);
+    await new AssistantRepository(workspaceId, workspace.path, {
+      kind: "page",
+      path: input.data.path,
+    }).deleteScopeData();
+    return c.body(null, 204);
+  } catch (error) {
     if (
       error instanceof PageNotFoundError ||
       error instanceof WorkspaceNotFoundError

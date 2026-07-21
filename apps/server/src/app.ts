@@ -15,7 +15,7 @@ app.use(
   "/*",
   cors({
     origin: env.CORS_ORIGIN,
-    allowMethods: ["GET", "POST", "PUT", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowHeaders: ["Content-Type", "If-Match", "If-None-Match", "Last-Event-ID"],
     exposeHeaders: ["ETag", "Content-Disposition"],
   }),

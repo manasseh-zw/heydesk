@@ -102,6 +102,41 @@ export class AssistantRepository {
       );
   }
 
+  async deleteScopeData(): Promise<void> {
+    await this.initialize();
+    const key = scopeKey(this.scope);
+
+    await this.connection.db.transaction(async (transaction) => {
+      await transaction
+        .delete(schema.assistantEvents)
+        .where(
+          and(
+            eq(schema.assistantEvents.workspaceId, this.workspaceId),
+            eq(schema.assistantEvents.scopeKind, this.scope.kind),
+            eq(schema.assistantEvents.scopeKey, key),
+          ),
+        );
+      await transaction
+        .delete(schema.assistantRuns)
+        .where(
+          and(
+            eq(schema.assistantRuns.workspaceId, this.workspaceId),
+            eq(schema.assistantRuns.scopeKind, this.scope.kind),
+            eq(schema.assistantRuns.scopeKey, key),
+          ),
+        );
+      await transaction
+        .delete(schema.assistantThreadScopes)
+        .where(
+          and(
+            eq(schema.assistantThreadScopes.workspaceId, this.workspaceId),
+            eq(schema.assistantThreadScopes.scopeKind, this.scope.kind),
+            eq(schema.assistantThreadScopes.scopeKey, key),
+          ),
+        );
+    });
+  }
+
   async createRun(run: AssistantRun): Promise<void> {
     await this.initialize();
     const active = await this.getActiveRun();

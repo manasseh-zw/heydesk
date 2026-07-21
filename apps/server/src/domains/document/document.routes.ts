@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 
+import { AssistantRepository } from "../assistant/assistant.repository";
 import {
   WorkspaceNotFoundError,
   workspaceService,
@@ -113,6 +114,25 @@ documentRoutes.put("/:workspaceId/documents/content", async (c) => {
     );
     c.header("ETag", `"${document.revision}"`);
     return c.json(document);
+  } catch (error) {
+    return mapDocumentError(c, error);
+  }
+});
+
+documentRoutes.delete("/:workspaceId/documents/content", async (c) => {
+  const input = documentPathSchema.safeParse(c.req.query());
+  if (!input.success) {
+    return c.json({ error: input.error.issues[0]?.message }, 400);
+  }
+  try {
+    const workspaceId = c.req.param("workspaceId");
+    const workspace = await workspaceService.getById(workspaceId);
+    await documentService.delete(workspaceId, input.data.path);
+    await new AssistantRepository(workspaceId, workspace.path, {
+      kind: "document",
+      path: input.data.path,
+    }).deleteScopeData();
+    return c.body(null, 204);
   } catch (error) {
     return mapDocumentError(c, error);
   }

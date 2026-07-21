@@ -20,6 +20,20 @@ export async function openWorkspace(path: string): Promise<WorkspaceSummary> {
   });
 }
 
+export async function removeWorkspace(workspaceId: string): Promise<void> {
+  const response = await fetch(
+    `${getServerUrl()}/api/workspaces/${encodeURIComponent(workspaceId)}`,
+    { method: "DELETE" },
+  );
+  if (response.ok) return;
+  const result: unknown = await response.json().catch(() => null);
+  throw new Error(
+    result && typeof result === "object" && "error" in result
+      ? String(result.error)
+      : "Heydesk could not remove that workspace.",
+  );
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${getServerUrl()}${path}`, {
     headers: { "Content-Type": "application/json", ...init?.headers },

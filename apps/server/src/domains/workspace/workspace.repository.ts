@@ -33,6 +33,16 @@ export class WorkspaceRepository {
       workspace,
       ...current.filter((item) => item.path !== workspace.path),
     ].slice(0, 8);
+
+    await this.writeRecent(workspaces);
+  }
+
+  async forget(id: string): Promise<void> {
+    const current = await this.listRecent();
+    await this.writeRecent(current.filter((workspace) => workspace.id !== id));
+  }
+
+  private async writeRecent(workspaces: WorkspaceSummary[]): Promise<void> {
     const value: RecentWorkspaceFile = { version: 1, workspaces };
 
     await mkdir(dirname(this.stateFile), { recursive: true });

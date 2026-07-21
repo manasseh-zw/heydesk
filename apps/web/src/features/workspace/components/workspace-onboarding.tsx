@@ -1,6 +1,13 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Folder, FolderOpen, LoaderCircle, Plus } from "lucide-react";
+import {
+  Folder,
+  FolderOpen,
+  LoaderCircle,
+  MoreHorizontal,
+  Plus,
+  Trash2,
+} from "lucide-react";
 
 import { Button } from "@heydesk/ui/components/button";
 import {
@@ -14,6 +21,12 @@ import {
 } from "@heydesk/ui/components/dialog";
 import { Input } from "@heydesk/ui/components/input";
 import { Label } from "@heydesk/ui/components/label";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@heydesk/ui/components/dropdown-menu";
 
 import { LogoMark } from "@/components/logo";
 import { assistantKeys } from "@/features/assistant/assistant.queries";
@@ -24,6 +37,7 @@ import {
   createWorkspace,
   getWorkspaceOverview,
   openWorkspace,
+  removeWorkspace,
 } from "../workspace.service";
 import type { WorkspaceOverview, WorkspaceSummary } from "../workspace.types";
 import { WorkspaceShell } from "./workspace-shell";
@@ -47,6 +61,9 @@ export function WorkspaceOnboarding() {
   const [error, setError] = useState<string | null>(null);
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
   const [transition, setTransition] = useState<WorkspaceTransition>("idle");
+  const [workspaceToRemove, setWorkspaceToRemove] =
+    useState<WorkspaceSummary | null>(null);
+  const [removingWorkspace, setRemovingWorkspace] = useState(false);
 
   async function loadOverview() {
     setError(null);
@@ -180,6 +197,33 @@ export function WorkspaceOnboarding() {
     }
   }
 
+  async function confirmRemoveWorkspace() {
+    if (!workspaceToRemove) return;
+    setRemovingWorkspace(true);
+    setError(null);
+    try {
+      await removeWorkspace(workspaceToRemove.id);
+      setOverview((current) =>
+        current
+          ? {
+              ...current,
+              recent: current.recent.filter(
+                (workspace) => workspace.id !== workspaceToRemove.id,
+              ),
+            }
+          : current,
+      );
+      queryClient.removeQueries({
+        queryKey: ["workspaces", workspaceToRemove.id],
+      });
+      setWorkspaceToRemove(null);
+    } catch (removeError) {
+      setError(toMessage(removeError));
+    } finally {
+      setRemovingWorkspace(false);
+    }
+  }
+
   if (selectedWorkspace) {
     const workspaceVisible =
       transition === "idle" || transition === "revealing";
@@ -295,20 +339,43 @@ export function WorkspaceOnboarding() {
             {overview && overview.recent.length > 0 && (
               <div className="-mx-3 max-h-52 min-h-0 space-y-0.5 overflow-y-auto px-1">
                 {overview.recent.map((workspace) => (
-                  <Button
-                    className="group h-auto w-full justify-start gap-3 rounded-xl px-3 py-3 text-left"
-                    key={workspace.path}
-                    onClick={() => void openWorkspacePath(workspace.path)}
-                    variant="ghost"
-                  >
-                    <Folder className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">{workspace.name}</span>
-                      <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
-                        {workspace.path}
+                  <div className="group relative" key={workspace.path}>
+                    <Button
+                      className="h-auto w-full justify-start gap-3 rounded-xl px-3 py-3 pr-10 text-left"
+                      onClick={() => void openWorkspacePath(workspace.path)}
+                      variant="ghost"
+                    >
+                      <Folder className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">
+                          {workspace.name}
+                        </span>
+                        <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
+                          {workspace.path}
+                        </span>
                       </span>
-                    </span>
-                  </Button>
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        aria-label={`Workspace options for ${workspace.name}`}
+                        className="absolute top-1/2 right-3 grid size-6 -translate-y-1/2 place-items-center rounded-md text-muted-foreground opacity-0 outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 group-hover:opacity-100 aria-expanded:opacity-100"
+                      >
+                        <MoreHorizontal className="size-3.5" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="end"
+                        className="w-32 min-w-32 rounded-lg p-0.5"
+                      >
+                        <DropdownMenuItem
+                          className="gap-1.5 rounded-md px-1.5 py-1 text-xs font-normal [&_svg]:size-3"
+                          onClick={() => setWorkspaceToRemove(workspace)}
+                          variant="destructive"
+                        >
+                          <Trash2 /> Remove
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 ))}
               </div>
             )}
@@ -322,6 +389,37 @@ export function WorkspaceOnboarding() {
         onOpenChange={(open) => !open && setDialogMode(null)}
         onWorkspaceReady={handleWorkspaceReady}
       />
+      <Dialog
+        open={Boolean(workspaceToRemove)}
+        onOpenChange={(open) => {
+          if (!open && !removingWorkspace) setWorkspaceToRemove(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Remove “{workspaceToRemove?.name}” from Heydesk?
+            </DialogTitle>
+            <DialogDescription>
+              This clears it from your recent workspaces. The folder and all of
+              its files remain safely on your computer.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-6">
+            <DialogClose render={<Button type="button" variant="outline" />}>
+              Cancel
+            </DialogClose>
+            <Button
+              disabled={removingWorkspace}
+              onClick={() => void confirmRemoveWorkspace()}
+              type="button"
+              variant="destructive"
+            >
+              {removingWorkspace ? "Removing…" : "Remove workspace"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

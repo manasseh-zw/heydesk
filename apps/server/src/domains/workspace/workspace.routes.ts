@@ -43,6 +43,18 @@ workspaceRoutes.post("/open", async (c) => {
   }
 });
 
+workspaceRoutes.delete("/:workspaceId", async (c) => {
+  try {
+    await workspaceService.remove(c.req.param("workspaceId"));
+    return c.body(null, 204);
+  } catch (error) {
+    if (error instanceof WorkspaceNotFoundError) {
+      return c.json({ error: error.message }, 404);
+    }
+    throw error;
+  }
+});
+
 async function readJson(request: Request): Promise<unknown> {
   try {
     return await request.json();

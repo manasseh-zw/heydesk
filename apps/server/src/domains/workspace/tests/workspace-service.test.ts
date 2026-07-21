@@ -83,4 +83,20 @@ describe("WorkspaceService", () => {
       ),
     ).resolves.toContain('"version": 3');
   });
+
+  it("removes a workspace from recents without deleting its folder", async () => {
+    const home = await mkdtemp(join(tmpdir(), "heydesk-workspace-"));
+    temporaryDirectories.push(home);
+    const service = new WorkspaceService(
+      new WorkspaceRepository(join(home, ".heydesk", "workspaces.json")),
+      home,
+      "production",
+    );
+    const workspace = await service.create("Temporary Studio");
+
+    await service.remove(workspace.id);
+
+    await expect(service.getOverview()).resolves.toMatchObject({ recent: [] });
+    expect((await stat(workspace.path)).isDirectory()).toBe(true);
+  });
 });

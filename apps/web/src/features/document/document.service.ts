@@ -35,6 +35,16 @@ export async function importDocument(
   );
 }
 
+export async function deleteDocument(
+  workspaceId: string,
+  path: string,
+): Promise<void> {
+  const response = await fetch(documentContentUrl(workspaceId, path), {
+    method: "DELETE",
+  });
+  if (!response.ok) throw await responseError(response);
+}
+
 export async function getDocument(
   workspaceId: string,
   path: string,

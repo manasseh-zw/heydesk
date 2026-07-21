@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createPage, savePage } from "../page.service";
+import { createPage, deletePage, savePage } from "../page.service";
 import { PageRevisionConflictError, type Page } from "../page.types";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -42,6 +42,22 @@ describe("page client service", () => {
       expectedRevision: "a".repeat(64),
       origin: "user",
     });
+  });
+
+  it("deletes the encoded page path", async () => {
+    let request: { input: unknown; init?: RequestInit } | undefined;
+    vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
+      request = { input, init };
+      return new Response(null, { status: 204 });
+    });
+
+    await expect(
+      deletePage("workspace-1", "pages/Project brief.md"),
+    ).resolves.toBeUndefined();
+    expect(String(request?.input)).toContain(
+      "path=pages%2FProject%20brief.md",
+    );
+    expect(request?.init?.method).toBe("DELETE");
   });
 
   it("surfaces the current disk page on a stale revision", async () => {

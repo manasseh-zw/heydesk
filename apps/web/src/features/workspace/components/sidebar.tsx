@@ -7,8 +7,10 @@ import {
   FolderOpen,
   Folders,
   Home,
+  MoreHorizontal,
   Plus,
   Search,
+  Trash2,
 } from "lucide-react";
 import {
   useEffect,
@@ -52,6 +54,7 @@ import {
   SidebarHeader,
   SidebarInput,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
@@ -68,8 +71,10 @@ import type { WorkspaceSummary } from "../workspace.types";
 type WorkspaceSidebarProps = {
   workspace: WorkspaceSummary;
   onCreateDocument: (name: string) => Promise<void>;
+  onDeleteDocument: (path: string) => Promise<void>;
   onImportDocument: (file: File) => Promise<void>;
   onCreatePage: (name: string) => Promise<void>;
+  onDeletePage: (path: string) => Promise<void>;
   onOpenPage: (path: string) => void;
   onOpenDocument: (path: string) => void;
   onOpenHome: () => void;
@@ -81,8 +86,10 @@ type WorkspaceSidebarProps = {
 export function WorkspaceSidebar({
   workspace,
   onCreateDocument,
+  onDeleteDocument,
   onImportDocument,
   onCreatePage,
+  onDeletePage,
   onOpenPage,
   onOpenDocument,
   onOpenHome,
@@ -177,6 +184,7 @@ export function WorkspaceSidebar({
             setCreatingKind(null);
           }}
           onOpen={onOpenPage}
+          onDelete={onDeletePage}
           activePath={activePagePath}
           loading={pagesQuery.isPending}
           searchQuery={query}
@@ -200,6 +208,7 @@ export function WorkspaceSidebar({
             setCreatingKind(null);
           }}
           onOpen={onOpenDocument}
+          onDelete={onDeleteDocument}
           onItemIntent={() => void preloadDocumentView()}
           activePath={activeDocumentPath}
           loading={documentsQuery.isPending}
@@ -236,6 +245,7 @@ type ContentSectionProps = {
   onCancelCreate?: () => void;
   onCreateItem?: (name: string) => Promise<void>;
   onOpen: (path: string) => void;
+  onDelete?: (path: string) => Promise<void>;
   activePath: string | null;
   loading: boolean;
   searchQuery: string;
@@ -253,6 +263,7 @@ function ContentSection({
   onCancelCreate,
   onCreateItem,
   onOpen,
+  onDelete,
   activePath,
   loading,
   searchQuery,
@@ -313,6 +324,13 @@ function ContentSection({
                     <ItemIcon strokeWidth={1.45} />
                     <span>{item.title}</span>
                   </SidebarMenuButton>
+                  {onDelete && (
+                    <ContentItemActions
+                      item={item}
+                      kind={document ? "document" : "page"}
+                      onDelete={onDelete}
+                    />
+                  )}
                 </SidebarMenuItem>
               ))}
               {!creating && !loading && items.length === 0 && (
@@ -330,6 +348,90 @@ function ContentSection({
         </CollapsibleContent>
       </SidebarGroup>
     </Collapsible>
+  );
+}
+
+function ContentItemActions({
+  item,
+  kind,
+  onDelete,
+}: {
+  item: NavigationItem;
+  kind: "page" | "document";
+  onDelete: (path: string) => Promise<void>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const remove = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onDelete(item.path);
+      setConfirming(false);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : `Could not delete ${kind}.`,
+      );
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <SidebarMenuAction
+              aria-label={`${kind === "page" ? "Page" : "Document"} options for ${item.title}`}
+              showOnHover
+            />
+          }
+        >
+          <MoreHorizontal className="size-3.5" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          className="w-28 min-w-28 rounded-lg p-0.5"
+        >
+          <DropdownMenuItem
+            className="gap-1.5 rounded-md px-1.5 py-1 text-xs font-normal [&_svg]:size-3"
+            onClick={() => setConfirming(true)}
+            variant="destructive"
+          >
+            <Trash2 /> Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Dialog open={confirming} onOpenChange={setConfirming}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete “{item.title}”?</DialogTitle>
+            <DialogDescription>
+              This permanently removes the {kind} and its assistant history
+              from this workspace.
+            </DialogDescription>
+          </DialogHeader>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <DialogFooter className="mt-6">
+            <DialogClose render={<Button type="button" variant="outline" />}>
+              Cancel
+            </DialogClose>
+            <Button
+              disabled={busy}
+              onClick={() => void remove()}
+              type="button"
+              variant="destructive"
+            >
+              {busy ? "Deleting…" : `Delete ${kind}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

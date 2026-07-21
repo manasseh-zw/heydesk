@@ -124,6 +124,12 @@ export class DocumentService {
     return fileFor(root, path, buffer);
   }
 
+  async delete(workspaceId: string, requestedPath: string): Promise<void> {
+    const root = await this.root(workspaceId);
+    const path = await resolveExistingDocument(root, requestedPath);
+    await rm(path);
+  }
+
   private async root(workspaceId: string): Promise<string> {
     const workspace = await this.workspaces.getById(workspaceId);
     return realpath(workspace.path);

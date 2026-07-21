@@ -25,6 +25,23 @@ export async function createPage(
   });
 }
 
+export async function deletePage(
+  workspaceId: string,
+  path: string,
+): Promise<void> {
+  const response = await fetch(
+    `${getServerUrl()}/api/workspaces/${encodeURIComponent(workspaceId)}/pages/content?path=${encodeURIComponent(path)}`,
+    { method: "DELETE" },
+  );
+  if (response.ok) return;
+  const result: unknown = await response.json().catch(() => null);
+  const message =
+    result && typeof result === "object" && "error" in result
+      ? String(result.error)
+      : "Heydesk could not delete that page.";
+  throw new Error(message);
+}
+
 export async function getPage(
   workspaceId: string,
   path: string,
