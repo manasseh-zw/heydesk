@@ -175,7 +175,7 @@ export function HomeComposer({
 
   const submit = (next: ComposerValue) => {
     const text = next.text.trim();
-    if (!onSubmit || (!text && !selectedCommandId)) return;
+    if (isRunning || !onSubmit || (!text && !selectedCommandId)) return;
     void onSubmit(
       text,
       preferences,
@@ -241,6 +241,7 @@ export function HomeComposer({
             "/": {
               items: commandsByContext[context],
               onSelect(item, selection) {
+                if (isRunning) return;
                 selection.clearTrigger();
                 const commandId = item.id as ComposerCommandId;
                 if (composerCommandRequiresInput(commandId)) {
