@@ -1,17 +1,19 @@
 <p align="center">
-  <img src="docs/assets/banner-logo.png" alt="Heydesk" width="640" />
+  <img src="docs/assets/banner-logo.png" alt="Heydesk" width="420" />
 </p>
 
-# Heydesk
+<br />
 
-### A local-first Documents OS powered by Codex.
+<h1 align="center">A local-first Documents OS powered by Codex.</h1>
 
-Heydesk brings Codex directly into first-class Markdown and Word editors, creating a continuous path from workspace context to polished, editable documents.
+<p align="center">Heydesk brings Codex directly into first-class Markdown and Word editors, creating a continuous path from workspace context to polished, editable documents.</p>
 
-[![Download Heydesk](https://img.shields.io/badge/Download-Heydesk%20DMG-88cc00?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/manasseh-zw/heydesk/releases/download/v0.0.1-preview/Heydesk-0.0.1-arm64.dmg)
-[![GitHub Repository](https://img.shields.io/badge/GitHub-Repository-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/manasseh-zw/heydesk)
-[![Codex](https://img.shields.io/badge/Built%20with-Codex-111111?style=for-the-badge)](https://openai.com/codex/)
-[![GPT-5.6](https://img.shields.io/badge/Powered%20by-GPT--5.6-412991?style=for-the-badge)](https://openai.com/)
+<p align="center">
+  <a href="https://github.com/manasseh-zw/heydesk/releases/download/v0.0.1-preview/Heydesk-0.0.1-arm64.dmg"><img src="https://img.shields.io/badge/Download-Heydesk%20DMG-88cc00?style=for-the-badge&logo=apple&logoColor=white" alt="Download Heydesk" /></a>
+  <a href="https://github.com/manasseh-zw/heydesk"><img src="https://img.shields.io/badge/GitHub-Repository-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Repository" /></a>
+  <a href="https://openai.com/codex/"><img src="https://img.shields.io/badge/Built%20with-Codex-111111?style=for-the-badge" alt="Built with Codex" /></a>
+  <a href="https://openai.com/"><img src="https://img.shields.io/badge/Powered%20by-GPT--5.6-412991?style=for-the-badge" alt="Powered by GPT-5.6" /></a>
+</p>
 
 ![Heydesk home workspace](https://i.ibb.co/qMjWcPKD/heydesk-home.png)
 
