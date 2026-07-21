@@ -38,5 +38,6 @@
     "turbo": "^2.10.2",
     "typescript": "catalog:"
   },
-  "packageManager": "pnpm@10.14.0"
+  "packageManager": "pnpm@10.14.0",
+  "license": "MIT"
 }
