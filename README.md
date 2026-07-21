@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://heydesk.dev-manasseh.chatgpt.site"><img src="https://img.shields.io/badge/Website-Heydesk-84cc16?style=for-the-badge" alt="Heydesk website" /></a>
-  <a href="https://github.com/manasseh-zw/heydesk/releases/download/v0.0.1-preview/Heydesk-0.0.1-arm64.dmg"><img src="https://img.shields.io/badge/Download-Heydesk%20DMG-88cc00?style=for-the-badge&logo=apple&logoColor=white" alt="Download Heydesk" /></a>
+  <a href="https://heydesk.dev-manasseh.chatgpt.site"><img src="https://img.shields.io/badge/Download-Latest%20Heydesk%20DMG-88cc00?style=for-the-badge&logo=apple&logoColor=white" alt="Download the latest Heydesk DMG" /></a>
   <a href="https://github.com/manasseh-zw/heydesk"><img src="https://img.shields.io/badge/GitHub-Repository-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub Repository" /></a>
   <a href="https://openai.com/codex/"><img src="https://img.shields.io/badge/Built%20with-Codex-111111?style=for-the-badge" alt="Built with Codex" /></a>
   <a href="https://openai.com/"><img src="https://img.shields.io/badge/Powered%20by-GPT--5.6-412991?style=for-the-badge" alt="Powered by GPT-5.6" /></a>
@@ -475,12 +475,11 @@ pnpm run test:assistant-e2e
 
 Every push to `main` runs the desktop validation and packaging pipeline. Successful runs publish an incremental Apple Silicon GitHub prerelease containing a DMG and ZIP artifact.
 
-The current preview release is available here:
+The latest preview release is available here:
 
 - [Visit the Heydesk website](https://heydesk.dev-manasseh.chatgpt.site)
-- [Heydesk v0.0.1-preview](https://github.com/manasseh-zw/heydesk/releases/tag/v0.0.1-preview)
-- [Download the Apple Silicon DMG](https://github.com/manasseh-zw/heydesk/releases/download/v0.0.1-preview/Heydesk-0.0.1-arm64.dmg)
-- [Download the Apple Silicon ZIP](https://github.com/manasseh-zw/heydesk/releases/download/v0.0.1-preview/Heydesk-0.0.1-mac-arm64.zip)
+- [Download the latest Apple Silicon DMG](https://heydesk.dev-manasseh.chatgpt.site)
+- [Browse all GitHub releases](https://github.com/manasseh-zw/heydesk/releases)
 
 ## Links
 
