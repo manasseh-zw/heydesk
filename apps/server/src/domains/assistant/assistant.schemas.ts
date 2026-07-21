@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const startAssistantRunSchema = z.object({
   runId: z.string().min(1).max(200),
-  message: z.string().trim().min(1).max(100_000),
+  message: z.string().trim().min(1).max(20_000),
   context: z
     .discriminatedUnion("kind", [
       z.object({

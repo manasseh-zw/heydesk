@@ -141,6 +141,7 @@ export function AssistantSessionProvider({
     connection,
     id: `heydesk:${workspace.id}:${scopeId}`,
     threadId: `${workspace.id}:${scopeId}`,
+    queue: "drop",
     live: hydratedScopeId === scopeId,
     initialMessages: [],
     onCustomEvent(name, value) {
